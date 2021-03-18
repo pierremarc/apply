@@ -33,10 +33,10 @@ sym @prop = 'bin' -> square 8 rgb(12,34,56)
 
 layer point postgis(user:pwd@localhost/schema_name/table_name2)
 srid 4326
-data prop timestamp(number(col2))
+data prop number(col2)
 sym @prop > date(2020-01-01) 
   -> label format-date(@prop) 'sans-serif' 12 
-    | center 
-    | translate y -12
+    | center()
+    | translate-y(-12)
 
 
