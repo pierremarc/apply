@@ -1,0 +1,42 @@
+# test design for a declarative map format
+
+map
+srid 3857
+extent 11111 22222 333333 444444
+
+
+layer polygon geojson(files/layer1.geojson)
+srid 4356
+data prop number(colum name)
+data threshold 100 
+sym @prop < @threshold -> fill blue
+sym @prop >= @threshold -> fill red
+
+
+layer polygon geojson(files/layer2.geojson)
+srid 4356
+data prop1 string(col1)
+data prop2 string(col2)
+sym @prop1 = 'garden' 
+  | @prop1 = 'park'
+  -> fill green
+sym @prop2 = 'public'
+  -> pattern files/dot.svg 
+
+
+layer point postgis(user:pwd@localhost/schema_name/table_name)
+srid 31370
+data prop string(col1)
+sym @prop = 'bench' -> circle 6 red
+sym @prop = 'bin' -> square 8 rgb(12,34,56)
+
+
+layer point postgis(user:pwd@localhost/schema_name/table_name2)
+srid 4326
+data prop timestamp(number(col2))
+sym @prop > date(2020-01-01) 
+  -> label format-date(@prop) 'sans-serif' 12 
+    | center 
+    | translate y -12
+
+
