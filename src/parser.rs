@@ -1,20 +1,22 @@
-use pom::parser::{end, list, none_of, one_of, seq, sym, Parser};
+use pom::parser::{call, end, list, none_of, one_of, seq, sym, Parser};
 use pom::Error as PomError;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
 use std::rc::Rc;
 use std::str::{self, FromStr};
-use std::{borrow::BorrowMut, cell::RefCell};
 
 use crate::ast::{
-    Directive, Extent, FunctionCall, LayerBlock, Literal, MapBlock, MapSpec, Num, Srid, Value,
-    ValueList,
+    pair, Circle, Command, Constructor, Data, DataType, Directive, Driver, Extent, Fill,
+    FunctionCall, Label, LayerBlock, Literal, MapBlock, MapSpec, Num, Pattern, Predicate, Source,
+    Square, Srid, Stroke, Sym, Value,
 };
 #[derive(Debug, Clone)]
 pub enum ParseError {
     Mysterious,
     Wrap(PomError),
     DataNotInScope(String),
+    UnknownPredicate(String),
 }
 
 impl fmt::Display for ParseError {
@@ -23,6 +25,7 @@ impl fmt::Display for ParseError {
             Self::Mysterious => write!(f, "Something bad happened..."),
             Self::Wrap(e) => write!(f, "PomError: {}", e),
             Self::DataNotInScope(e) => write!(f, "Data Not In Scope: \"{}\"", e),
+            Self::UnknownPredicate(e) => write!(f, "Unknown Predicate: \"{}\"", e),
         }
     }
 }
@@ -31,65 +34,138 @@ impl fmt::Display for ParseError {
 
 #[derive(Clone)]
 pub struct Scope {
-    parent: Rc<RefCell<Option<Scope>>>,
-    values: HashMap<String, Value>,
+    values: HashMap<String, Data>,
 }
 
 impl Scope {
-    pub fn root() -> Self {
+    pub fn new() -> Self {
         Scope {
-            parent: Rc::new(RefCell::new(None)),
             values: HashMap::new(),
         }
     }
 
-    pub fn find_value(&self, name: String) -> Option<Value> {
-        let parent_scope = self.parent.borrow();
-        let parent_value = parent_scope
-            .as_ref()
-            .and_then(|scope| scope.find_value(name.clone()));
-        self.values.get(&name).map(|v| v.clone()).or(parent_value)
+    pub fn find_value(&self, name: String) -> Option<Data> {
+        self.values.get(&name).map(|v| v.clone())
     }
 }
 
 pub struct Context {
-    pub error: Option<ParseError>,
-    pub scope: Scope,
+    scopes: Vec<Scope>,
+    depth: usize,
 }
 
 impl Context {
-    fn put_data(&mut self, name: String, value: Value) {
-        self.scope.values.insert(name, value);
+    fn new() -> Self {
+        Context {
+            scopes: Vec::new(),
+            depth: 0,
+        }
+    }
+
+    fn inc_depth(&mut self) {
+        self.depth += 1;
+    }
+
+    fn dec_depth(&mut self) {
+        self.depth -= 1;
+    }
+
+    fn push_scope(&mut self) {
+        self.scopes.push(Scope::new());
+    }
+
+    fn pop_scope(&mut self) {
+        self.scopes.pop();
+    }
+
+    fn put_data(&mut self, name: String, value: Data) {
+        self.scopes
+            .last_mut()
+            .map(|scope| scope.values.insert(name, value));
+    }
+
+    fn get_data(&self, name: String) -> Option<Data> {
+        let default_return: Option<Data> = None;
+        self.scopes
+            .iter()
+            .rev()
+            .fold(default_return, |opt_data, scope| {
+                opt_data.or(scope.find_value(name.clone()))
+            })
     }
 }
 
 pub type SharedContext = Rc<RefCell<Context>>;
 
-pub fn get_data(ctx: &SharedContext, name: String) -> Option<Value> {
-    let ctx = ctx.borrow();
-    ctx.scope.find_value(name).map(|v| v.clone())
+pub fn new_context() -> SharedContext {
+    Rc::new(RefCell::new(Context::new()))
 }
 
-pub fn put_data(ctx: SharedContext, name: String, value: Value) {
+pub fn inc_depth(ctx: &SharedContext) {
+    let mut ctx = ctx.borrow_mut();
+    ctx.inc_depth();
+    assert!(ctx.depth < 32);
+    println!("Depth: {}", ctx.depth);
+}
+
+pub fn dec_depth(ctx: &SharedContext) {
+    let mut ctx = ctx.borrow_mut();
+    ctx.dec_depth();
+}
+
+pub fn push_scope(ctx: &SharedContext) {
+    let mut ctx = ctx.borrow_mut();
+    ctx.push_scope();
+}
+
+pub fn pop_scope(ctx: &SharedContext) {
+    let mut ctx = ctx.borrow_mut();
+    ctx.pop_scope();
+}
+
+pub fn get_data(ctx: &SharedContext, name: String) -> Option<Data> {
+    let ctx = ctx.borrow();
+    ctx.get_data(name)
+}
+
+pub fn put_data(ctx: &SharedContext, name: String, value: Data) {
     let _ = ctx
         .try_borrow_mut()
         .map(|mut ctx| ctx.put_data(name, value));
 }
 
-// pub fn with_context<'a, I, O, S>(parser: Parser<'a, I, O>, ctx: SharedContext) -> Parser<'a, I, O>
-// where
-//     I: 'a + PartialEq + Debug,
-//     O: 'a,
-//     S: 'a + Fn(),
-// {
-//     let mut ctx = ctx.borrow_mut();
-//     Parser::new(move |input: &'a [I], start: usize| {
-//         (parser.method)(input, start).map(|(o, s)| {
-//             on_success();
-//             (o, s)
-//         })
-//     })
-// }
+pub fn with_finalizer<'a, I, O, E>(parser: Parser<'a, I, O>, finalizer: E) -> Parser<'a, I, O>
+where
+    I: 'a + PartialEq + std::fmt::Debug,
+    O: 'a,
+    E: 'a + Fn(),
+{
+    Parser::new(move |input: &'a [I], start: usize| {
+        let result = (parser.method)(input, start);
+        finalizer();
+        result
+    })
+}
+pub fn trace<'a, I, O>(name: &'a str, parser: Parser<'a, I, O>) -> Parser<'a, I, O>
+where
+    I: 'a + PartialEq + std::fmt::Debug,
+    O: 'a + Clone,
+{
+    Parser::new(move |input: &'a [I], start: usize| {
+        let result = (parser.method)(input, start);
+        println!(
+            "[trace:{}] {:?} \n\t:{} -> {}",
+            name,
+            input,
+            start,
+            match result.clone() {
+                Ok((_, end)) => format!("ok({})", end),
+                Err(e) => format!("err({})", e),
+            }
+        );
+        result
+    })
+}
 
 fn eol<'a>() -> Parser<'a, u8, ()> {
     sym(b'\n').discard().name("eol")
@@ -104,7 +180,7 @@ fn spacing<'a>() -> Parser<'a, u8, ()> {
 }
 
 fn trailing_space<'a>() -> Parser<'a, u8, ()> {
-    one_of(b" \t").repeat(0..).discard() - (eol() | end()).name("trailing_space")
+    one_of(b" \t").repeat(0..).discard() - (eol() | end())
 }
 
 fn string<'a>() -> Parser<'a, u8, String> {
@@ -168,29 +244,6 @@ fn literal<'a>() -> Parser<'a, u8, Literal> {
     (n | b | s).name("literal")
 }
 
-fn function<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, FunctionCall> {
-    let lit = literal().map(|l| Value::Lit(l));
-    let dat =
-        ident().convert(move |s| get_data(ctx, s.clone()).ok_or(ParseError::DataNotInScope(s)));
-    let arg = lit | dat;
-    let args: Parser<'a, u8, Vec<Value>> = list(arg, spacing().opt() + sym(b',') + spacing().opt());
-    let f = ident() - sym(b'(') + args - sym(b')');
-
-    f.map(|(name, args)| FunctionCall { name, args })
-        .name("function")
-}
-
-// fn data_function<'a>() -> Parser<'a, u8, Function> {
-//     let arg = string().map(|s| Value::Ref(s));
-//     let f = ident() - sym(b'(') + arg - sym(b')');
-
-//     f.map(|(name, arg)| Function {
-//         name,
-//         args: vec![arg],
-//     })
-//     .name("data_function")
-// }
-
 fn srid<'a>(ctx: &SharedContext) -> Parser<'a, u8, Directive> {
     let kw = seq(KEYWORD_SRID);
     let srid_number = integer().expect("srid wants a srid");
@@ -220,33 +273,170 @@ fn extent<'a>(ctx: &SharedContext) -> Parser<'a, u8, Directive> {
         .name("extent")
 }
 
-fn map<'a>(ctx: &SharedContext) -> Parser<'a, u8, MapBlock> {
+fn map<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, MapBlock> {
+    push_scope(ctx);
     let map = seq(KEYWORD_MAP) - eol();
     let srid_and_extent = (srid(ctx) - trailing_space()) + extent(ctx);
     let extent_and_srid = (extent(ctx) - trailing_space()) + srid(ctx);
-    let expressions = srid_and_extent | extent_and_srid;
-    (map * expressions)
-        .map(|(e1, e2)| MapBlock {
-            directives: vec![e1, e2],
-        })
-        .name("map")
+    let expressions = (srid_and_extent | extent_and_srid) + list(data(ctx), trailing_space());
+
+    with_finalizer(
+        (map * expressions)
+            .map(|((e1, e2), datas)| MapBlock {
+                directives: [vec![e1, e2], datas].concat(),
+            })
+            .name("map"),
+        move || pop_scope(ctx),
+    )
 }
 
-// fn geometry_type<'a>() -> Parser<'a, u8, Node> {
-//     (seq(GEOMETRY_POINT) | seq(GEOMETRY_LINE) | seq(GEOMETRY_POLYGON))
-//         .convert(|arg| String::from_utf8(arg.to_vec()))
-//         .map(|s| Symbol::Ident(s).into())
-//         .name("geometry_type")
-// }
+fn source<'a>(ctx: &SharedContext) -> Parser<'a, u8, Directive> {
+    let source = seq(KEYWORD_SOURCE) - trailing_space();
+    let driver = (seq(SOURCE_DRIVER_GEOJSON).map(|_| Driver::Geojson)
+        | seq(SOURCE_DRIVER_POSTGIS).map(|_| Driver::Postgis)
+        | seq(SOURCE_DRIVER_SHAPEFILE).map(|_| Driver::Shapefile))
+        - trailing_space();
+    let path = string();
+    let opt_srid = trailing_space() * (number() - trailing_space()).opt();
+    let everything = source * (driver + path + opt_srid);
+    everything.map(|((driver, path), srid)| Source { driver, path, srid }.into())
+}
 
-fn layer<'a>(ctx: &SharedContext) -> Parser<'a, u8, LayerBlock> {
+fn datatype<'a>(ctx: &SharedContext) -> Parser<'a, u8, DataType> {
+    seq(DATATYPE_STRING).map(|_| DataType::String)
+        | seq(DATATYPE_NUMBER).map(|_| DataType::Number)
+        | seq(DATATYPE_BOOLEAN).map(|_| DataType::Boolean)
+}
+
+fn constructor<'a>(ctx: &SharedContext) -> Parser<'a, u8, Constructor> {
+    let sel = ((seq(KEYWORD_SELECT) - spacing()) * (string() + (spacing() * datatype(ctx))))
+        .map(|(selector, datatype)| Constructor::Select { selector, datatype });
+    let val = literal().map(|l| Constructor::Lit(l));
+    sel | val
+}
+
+fn data<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, Directive> {
+    let data = seq(KEYWORD_DATA) - spacing();
+    let identifier = ident() - spacing();
+    let constructor = constructor(ctx) - trailing_space();
+    (data * (identifier + constructor)).map(move |(ident, constructor)| {
+        let data = Data {
+            constructor: Box::new(constructor),
+            ident: ident.clone(),
+        };
+        put_data(ctx, ident, data.clone());
+        data.into()
+    })
+}
+
+fn function<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, FunctionCall> {
+    let sep = spacing().opt() + sym(b',') + spacing().opt();
+    let args: Parser<'a, u8, Vec<Value>> = list(call(move || value(ctx)), sep);
+    let f = ident() - sym(b'(') + args - sym(b')');
+
+    f.map(|(name, args)| FunctionCall { name, args })
+        .name("function")
+}
+
+fn value<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, Value> {
+    inc_depth(ctx);
+    let lit = literal().map(|l| Value::Lit(l));
+    let dat = ident()
+        .convert(move |s| get_data(ctx, s.clone()).ok_or(ParseError::DataNotInScope(s)))
+        .map(|d| Value::Data(d));
+    let fun = function(ctx).map(|f| Value::Fn(f));
+    with_finalizer(lit | dat | fun, move || {
+        dec_depth(ctx);
+    })
+}
+
+const PRED_OP_EQ: &[u8] = b"=";
+const PRED_OP_NOTEQ: &[u8] = b"!=";
+const PRED_OP_GT: &[u8] = b">";
+const PRED_OP_GTE: &[u8] = b">=";
+const PRED_OP_LT: &[u8] = b"<";
+const PRED_OP_LTE: &[u8] = b"<=";
+
+fn predicate<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, Predicate> {
+    let op = seq(PRED_OP_EQ)
+        | seq(PRED_OP_NOTEQ)
+        | seq(PRED_OP_GT)
+        | seq(PRED_OP_GTE)
+        | seq(PRED_OP_LT)
+        | seq(PRED_OP_LTE);
+    (value(ctx) - spacing() + op + value(ctx) - spacing()).convert(|((left, op), right)| match op {
+        PRED_OP_EQ => Ok(Predicate::Equal(pair(left, right))),
+        PRED_OP_NOTEQ => Ok(Predicate::NotEqual(pair(left, right))),
+        PRED_OP_GT => Ok(Predicate::GreaterThan(pair(left, right))),
+        PRED_OP_GTE => Ok(Predicate::GreaterThanOrEqual(pair(left, right))),
+        PRED_OP_LT => Ok(Predicate::LesserThan(pair(left, right))),
+        PRED_OP_LTE => Ok(Predicate::LesserThanOrEqual(pair(left, right))),
+        _ => Err(ParseError::UnknownPredicate(
+            String::from_utf8(op.into()).unwrap_or(String::new()),
+        )),
+    })
+}
+
+fn circle<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, Command> {
+    let kw = seq(COMMAND_CIRCLE) - spacing();
+    (kw * value(ctx)).map(|radius| Command::Circle(Circle { radius }))
+}
+fn square<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, Command> {
+    let kw = seq(COMMAND_SQUARE) - spacing();
+    (kw * value(ctx)).map(|size| Command::Square(Square { size }))
+}
+fn fill<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, Command> {
+    let kw = seq(COMMAND_FILL) - spacing();
+    (kw * value(ctx)).map(|color| Command::Fill(Fill { color }))
+}
+fn stroke<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, Command> {
+    let kw = seq(COMMAND_STROKE) - spacing();
+    (kw * (value(ctx) - spacing() + value(ctx)))
+        .map(|(color, size)| Command::Stroke(Stroke { color, size }))
+}
+fn pattern<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, Command> {
+    let kw = seq(COMMAND_PATTERN) - spacing();
+    (kw * value(ctx)).map(|path| Command::Pattern(Pattern { path }))
+}
+fn label<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, Command> {
+    let kw = seq(COMMAND_LABEL) - spacing();
+    (kw * value(ctx)).map(|content| Command::Label(Label { content }))
+}
+
+fn command<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, Command> {
+    (circle(ctx) | square(ctx) | fill(ctx) | stroke(ctx) | pattern(ctx) | label(ctx))
+        - trailing_space()
+}
+
+fn symbology<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, Directive> {
+    let kw = seq(KEYWORD_SYM) - spacing();
+    let pred = predicate(ctx) - spacing();
+    let commands = ((seq(KEYWORD_COMMAND) - spacing()) * command(ctx)).repeat(1..);
+    (kw * (pred + commands)).map(|(predicate, consequent)| {
+        Sym {
+            predicate,
+            consequent,
+        }
+        .into()
+    })
+}
+
+fn directive<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, Directive> {
+    source(ctx) | data(ctx) | symbology(ctx)
+}
+
+fn layer<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, LayerBlock> {
+    push_scope(ctx);
     let layer = seq(KEYWORD_LAYER) - trailing_space();
+    let sep = eol();
+    let directives = list(directive(ctx), sep);
 
-    layer
-        .map(|_| LayerBlock {
-            directives: Vec::new(),
-        })
-        .name("layer")
+    with_finalizer(
+        (layer * directives)
+            .map(|directives| LayerBlock { directives })
+            .name("layer"),
+        move || pop_scope(ctx),
+    )
 }
 
 pub fn parse<'a>(map_str: &'a str, ctx: &SharedContext) -> Result<MapSpec, ParseError> {
@@ -259,14 +449,28 @@ pub fn parse<'a>(map_str: &'a str, ctx: &SharedContext) -> Result<MapSpec, Parse
 
 const KEYWORD_MAP: &[u8] = b"map";
 const KEYWORD_LAYER: &[u8] = b"layer";
+const KEYWORD_SOURCE: &[u8] = b"source";
 const KEYWORD_SRID: &[u8] = b"srid";
 const KEYWORD_EXTENT: &[u8] = b"extent";
 const KEYWORD_DATA: &[u8] = b"data";
 const KEYWORD_SYM: &[u8] = b"sym";
-const KEYWORD_FILL: &[u8] = b"fill";
-const KEYWORD_STROKE: &[u8] = b"stroke";
-const KEYWORD_PATTERN: &[u8] = b"pattern";
-const KEYWORD_LABEL: &[u8] = b"label";
+const KEYWORD_SELECT: &[u8] = b"select";
+const KEYWORD_COMMAND: &[u8] = b"->";
+
+const COMMAND_CIRCLE: &[u8] = b"circle";
+const COMMAND_SQUARE: &[u8] = b"square";
+const COMMAND_FILL: &[u8] = b"fill";
+const COMMAND_STROKE: &[u8] = b"stroke";
+const COMMAND_PATTERN: &[u8] = b"pattern";
+const COMMAND_LABEL: &[u8] = b"label";
+
+const SOURCE_DRIVER_GEOJSON: &[u8] = b"geojson";
+const SOURCE_DRIVER_POSTGIS: &[u8] = b"postgis";
+const SOURCE_DRIVER_SHAPEFILE: &[u8] = b"shapefile";
+
+const DATATYPE_STRING: &[u8] = b"string";
+const DATATYPE_NUMBER: &[u8] = b"number";
+const DATATYPE_BOOLEAN: &[u8] = b"bool";
 
 const GEOMETRY_POINT: &[u8] = b"point";
 const GEOMETRY_LINE: &[u8] = b"line";
@@ -278,11 +482,29 @@ const FALSE: &[u8] = b"false";
 #[cfg(test)]
 mod parser_test {
     use super::*;
+    #[test]
+    fn trailing_space_works() {
+        let map_str = "aaaaaaaaaaaaaa
+bbbbbbbbbbbbbb
+bbbbbbbbbbbbbb
+        ";
 
+        assert_eq!(
+            trace(
+                "tout",
+                list(ascii_letter().repeat(1..), trace("ts", trailing_space())),
+            )
+            .parse(map_str.as_bytes())
+            .unwrap()
+            .len(),
+            3
+        );
+    }
     #[test]
     fn parse_basic() {
         let map_str = include_str!("../data/map-format-basic");
-        match parse(map_str) {
+
+        match parse(map_str, &new_context()) {
             Ok(spec) => {
                 print!("\n**OK**\n{:?}\n", spec);
             }

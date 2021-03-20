@@ -147,10 +147,25 @@ pub struct Extent {
 }
 
 #[derive(Debug, Clone)]
+pub enum DataType {
+    String,
+    Number,
+    Boolean,
+}
+
+#[derive(Debug, Clone)]
+pub enum Constructor {
+    Select {
+        selector: String,
+        datatype: DataType,
+    },
+    Lit(Literal),
+}
+
+#[derive(Debug, Clone)]
 pub struct Data {
     pub ident: String,
-    pub constructor: String,
-    pub args: ValueList,
+    pub constructor: Box<Constructor>,
 }
 
 #[derive(Debug, Clone)]
@@ -158,11 +173,14 @@ pub enum Value {
     Lit(Literal),
     Data(Data),
     Fn(FunctionCall),
-    Pred(Box<Predicate>),
 }
 
 #[derive(Debug, Clone)]
 pub struct ValuePair(Value, Value);
+
+pub fn pair(left: Value, right: Value) -> ValuePair {
+    ValuePair(left, right)
+}
 
 pub type ValueList = Vec<Value>;
 
@@ -177,13 +195,64 @@ pub enum Predicate {
 }
 
 #[derive(Debug, Clone)]
-pub struct Sym {
-    pub predicate: Predicate,
-    pub consequent: Vec<FunctionCall>,
+pub struct Circle {
+    pub radius: Value,
+}
+#[derive(Debug, Clone)]
+pub struct Square {
+    pub size: Value,
 }
 
 #[derive(Debug, Clone)]
-pub struct Source(FunctionCall);
+pub struct Color;
+#[derive(Debug, Clone)]
+pub struct Fill {
+    pub color: Value,
+}
+#[derive(Debug, Clone)]
+pub struct Stroke {
+    pub color: Value,
+    pub size: Value,
+}
+#[derive(Debug, Clone)]
+pub struct Pattern {
+    pub path: Value,
+}
+
+#[derive(Debug, Clone)]
+pub struct Label {
+    pub content: Value,
+}
+
+#[derive(Debug, Clone)]
+pub enum Command {
+    Circle(Circle),
+    Square(Square),
+    Fill(Fill),
+    Stroke(Stroke),
+    Pattern(Pattern),
+    Label(Label),
+}
+
+#[derive(Debug, Clone)]
+pub struct Sym {
+    pub predicate: Predicate,
+    pub consequent: Vec<Command>,
+}
+
+#[derive(Debug, Clone)]
+pub enum Driver {
+    Geojson,
+    Postgis,
+    Shapefile,
+}
+
+#[derive(Debug, Clone)]
+pub struct Source {
+    pub driver: Driver,
+    pub path: String,
+    pub srid: Option<Num>,
+}
 
 #[derive(Debug, Clone)]
 pub enum Directive {
