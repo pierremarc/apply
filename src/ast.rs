@@ -1,23 +1,23 @@
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum Num {
     Integer(i64),
     Float(f64),
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum Literal {
     Number(Num),
     String(String),
     Boolean(bool),
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum BlockKeyword {
     Map,
     Layer,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum ExprKeyword {
     Srid,
     Extent,
@@ -25,7 +25,7 @@ pub enum ExprKeyword {
     Sym,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum SymKeyword {
     Fill,
     Stroke,
@@ -33,14 +33,14 @@ pub enum SymKeyword {
     Label,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum Keyword {
     Block(BlockKeyword),
     Expr(ExprKeyword),
     Sym(SymKeyword),
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum Operator {
     Eq,
     Lt,
@@ -49,7 +49,7 @@ pub enum Operator {
     Gte,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum Symbol {
     Or,
     Then,
@@ -57,25 +57,19 @@ pub enum Symbol {
     Ident(String),
 }
 
-#[derive(Clone)]
-pub enum Value {
-    Lit(Literal),
-    Ref(String),
-}
-
-#[derive(Clone)]
-pub struct Function {
+#[derive(Debug, Clone)]
+pub struct FunctionCall {
     pub name: String,
-    pub args: Vec<Value>,
+    pub args: ValueList,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum Node {
     Lit(Literal),
     Key(Keyword),
     Op(Operator),
     Sym(Symbol),
-    Fn(Function),
+    Fn(FunctionCall),
     Comment(String),
 }
 
@@ -139,7 +133,98 @@ impl From<Symbol> for Node {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
+pub struct Srid {
+    pub value: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct Extent {
+    pub minx: Num,
+    pub miny: Num,
+    pub maxx: Num,
+    pub maxy: Num,
+}
+
+#[derive(Debug, Clone)]
+pub struct Data {
+    pub ident: String,
+    pub constructor: String,
+    pub args: ValueList,
+}
+
+#[derive(Debug, Clone)]
+pub enum Value {
+    Lit(Literal),
+    Data(Data),
+    Fn(FunctionCall),
+    Pred(Box<Predicate>),
+}
+
+#[derive(Debug, Clone)]
+pub struct ValuePair(Value, Value);
+
+pub type ValueList = Vec<Value>;
+
+#[derive(Debug, Clone)]
+pub enum Predicate {
+    Equal(ValuePair),
+    NotEqual(ValuePair),
+    GreaterThan(ValuePair),
+    GreaterThanOrEqual(ValuePair),
+    LesserThan(ValuePair),
+    LesserThanOrEqual(ValuePair),
+}
+
+#[derive(Debug, Clone)]
+pub struct Sym {
+    pub predicate: Predicate,
+    pub consequent: Vec<FunctionCall>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Source(FunctionCall);
+
+#[derive(Debug, Clone)]
+pub enum Directive {
+    Srid(Srid),
+    Extent(Extent),
+    Data(Data),
+    Sym(Sym),
+    Source(Source),
+}
+
+impl From<Srid> for Directive {
+    fn from(arg: Srid) -> Self {
+        Directive::Srid(arg)
+    }
+}
+
+impl From<Extent> for Directive {
+    fn from(arg: Extent) -> Self {
+        Directive::Extent(arg)
+    }
+}
+
+impl From<Data> for Directive {
+    fn from(arg: Data) -> Self {
+        Directive::Data(arg)
+    }
+}
+
+impl From<Sym> for Directive {
+    fn from(arg: Sym) -> Self {
+        Directive::Sym(arg)
+    }
+}
+
+impl From<Source> for Directive {
+    fn from(arg: Source) -> Self {
+        Directive::Source(arg)
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Expression {
     pub nodes: Vec<Node>,
 }
@@ -167,14 +252,17 @@ pub fn expr() -> Expression {
     Expression::empty()
 }
 
+#[derive(Debug, Clone)]
 pub struct MapBlock {
-    pub expressions: Vec<Expression>,
+    pub directives: Vec<Directive>,
 }
 
+#[derive(Debug, Clone)]
 pub struct LayerBlock {
-    pub expressions: Vec<Expression>,
+    pub directives: Vec<Directive>,
 }
 
+#[derive(Debug, Clone)]
 pub struct MapSpec {
     pub map: MapBlock,
     pub layers: Vec<LayerBlock>,

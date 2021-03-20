@@ -1,0 +1,25 @@
+map
+srid 3857
+extent 11111 22222.2 333333 444444
+
+layer 
+source geojson("files/layer1.geojson")
+data prop number("colum name")
+data threshold 100 
+sym prop < threshold -> fill blue
+
+layer 
+source geojson(files/layer2.geojson)
+data prop1 string("col1")
+data prop2 string("col2")
+sym prop1 = "park" -> fill green
+sym prop2 = "public" -> pattern "files/dot.svg"
+
+layer 
+source postgis("user:pwd@localhost/schema_name/table_name", 31370)
+data prop string("col1")
+data red rgb(255, 30, 0)
+sym prop = "bench -> circle 6 red
+sym prop = "bin" -> square 8 rgb(12, 34, 56)
+
+
