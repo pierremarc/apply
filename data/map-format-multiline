@@ -6,7 +6,7 @@ data blue  rgb(0, 0, 255)
 
 layer
 source geojson "files/layer1.geojson" 
-data prop select "colum name" string
+data prop select "colum name" number
 data threshold 100 
 sym prop < threshold -> fill blue
 
@@ -31,5 +31,5 @@ sym prop = "bench"
   -> circle 6 
   -> fill red
 sym prop = "bin" 
- -> square 8 
- -> fill rgb(12, 34, 56)
+  -> square 8 
+  -> fill rgb(12, 34, 56)
