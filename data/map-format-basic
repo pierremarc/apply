@@ -1,13 +1,15 @@
 map
 srid 3857
 extent 11111 22222.2 333333 444444
-data blue  rgb(0, 0, 255) 
+data blue  rgb(0, 0, 255)
 
-layer 
-source geojson "files/layer1.geojson"
+
+layer
+source geojson "files/layer1.geojson" 
 data prop select "colum name" string
 data threshold 100 
 sym prop < threshold -> fill blue
+
 
 layer 
 source geojson "files/layer2.geojson"
@@ -17,11 +19,10 @@ data green  rgb(0, 255, 0)
 sym prop1 = "park" -> fill green -> stroke blue 2 
 sym prop2 = "public" -> pattern "files/dot.svg"
 
+
 layer 
 source postgis "user:pwd@localhost/schema_name/table_name" 31370
 data prop select "col1" string
 data red rgb(255, 30, 0)
 sym prop = "bench" -> circle 6 -> fill red
 sym prop = "bin" -> square 8 -> fill rgb(12, 34, 56)
-
-

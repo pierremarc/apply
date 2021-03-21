@@ -159,7 +159,7 @@ pub enum Constructor {
         selector: String,
         datatype: DataType,
     },
-    Lit(Literal),
+    Val(Value),
 }
 
 #[derive(Debug, Clone)]

@@ -1,10 +1,10 @@
 use pom::parser::{call, end, list, none_of, one_of, seq, sym, Parser};
 use pom::Error as PomError;
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
 use std::rc::Rc;
 use std::str::{self, FromStr};
+use std::{cell::RefCell, cmp::max};
 
 use crate::ast::{
     pair, Circle, Command, Constructor, Data, DataType, Directive, Driver, Extent, Fill,
@@ -45,6 +45,17 @@ impl Scope {
     }
 
     pub fn find_value(&self, name: String) -> Option<Data> {
+        println!(
+            "find_value({}) -> {}",
+            &name,
+            self.values
+                .keys()
+                .collect::<Vec<_>>()
+                .into_iter()
+                .map(|s| s.clone())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
         self.values.get(&name).map(|v| v.clone())
     }
 }
@@ -105,7 +116,7 @@ pub fn inc_depth(ctx: &SharedContext) {
     let mut ctx = ctx.borrow_mut();
     ctx.inc_depth();
     assert!(ctx.depth < 32);
-    println!("Depth: {}", ctx.depth);
+    // println!("Depth: {}", ctx.depth);
 }
 
 pub fn dec_depth(ctx: &SharedContext) {
@@ -116,22 +127,36 @@ pub fn dec_depth(ctx: &SharedContext) {
 pub fn push_scope(ctx: &SharedContext) {
     let mut ctx = ctx.borrow_mut();
     ctx.push_scope();
+    println!(">> push_scope {}", ctx.scopes.len());
 }
 
 pub fn pop_scope(ctx: &SharedContext) {
     let mut ctx = ctx.borrow_mut();
     ctx.pop_scope();
+    println!(">> pop_scope {}", ctx.scopes.len());
 }
 
 pub fn get_data(ctx: &SharedContext, name: String) -> Option<Data> {
-    let ctx = ctx.borrow();
-    ctx.get_data(name)
+    ctx.try_borrow().ok().and_then(|c| c.get_data(name))
 }
 
 pub fn put_data(ctx: &SharedContext, name: String, value: Data) {
+    println!("PUT DATA: '{}'", name.clone());
     let _ = ctx
         .try_borrow_mut()
         .map(|mut ctx| ctx.put_data(name, value));
+}
+
+pub fn with_init<'a, I, O, E>(parser: Parser<'a, I, O>, init: E) -> Parser<'a, I, O>
+where
+    I: 'a + PartialEq + std::fmt::Debug,
+    O: 'a,
+    E: 'a + Fn(),
+{
+    Parser::new(move |input: &'a [I], start: usize| {
+        init();
+        (parser.method)(input, start)
+    })
 }
 
 pub fn with_finalizer<'a, I, O, E>(parser: Parser<'a, I, O>, finalizer: E) -> Parser<'a, I, O>
@@ -146,21 +171,43 @@ where
         result
     })
 }
-pub fn trace<'a, I, O>(name: &'a str, parser: Parser<'a, I, O>) -> Parser<'a, I, O>
+
+pub fn trace<'a, O>(name: &'a str, parser: Parser<'a, u8, O>) -> Parser<'a, u8, O>
 where
-    I: 'a + PartialEq + std::fmt::Debug,
     O: 'a + Clone,
 {
-    Parser::new(move |input: &'a [I], start: usize| {
+    Parser::new(move |input: &'a [u8], start: usize| {
         let result = (parser.method)(input, start);
         println!(
-            "[trace:{}] {:?} \n\t:{} -> {}",
+            "[trace:{}] {} -> {}",
             name,
-            input,
             start,
             match result.clone() {
                 Ok((_, end)) => format!("ok({})", end),
-                Err(e) => format!("err({})", e),
+                Err(e) => {
+                    match e {
+                        PomError::Mismatch {
+                            ref message,
+                            position,
+                        } => {
+                            let context: String =
+                                String::from_utf8(input[max(0, start - 18)..position].into())
+                                    .unwrap();
+                            format!("err({} -> '{}')", message, context)
+                        }
+                        PomError::Custom {
+                            ref message,
+                            position,
+                            ref inner,
+                        } => {
+                            let context: String =
+                                String::from_utf8(input[max(0, start - 18)..position].into())
+                                    .unwrap();
+                            format!("err({} -> '{}')", message, context)
+                        }
+                        _ => format!("err({})", e),
+                    }
+                }
             }
         );
         result
@@ -172,7 +219,9 @@ fn eol<'a>() -> Parser<'a, u8, ()> {
 }
 
 fn block_sep<'a>() -> Parser<'a, u8, ()> {
-    one_of(b" \t").repeat(0..).discard() - (eol() + trailing_space()).name("block_sep")
+    let first_eol = trace("first_eol", trailing_space());
+    let second_eol = trace("second_eol", trailing_space()).repeat(1..);
+    trace("block_sep", first_eol - second_eol).name("block_sep")
 }
 
 fn spacing<'a>() -> Parser<'a, u8, ()> {
@@ -180,7 +229,7 @@ fn spacing<'a>() -> Parser<'a, u8, ()> {
 }
 
 fn trailing_space<'a>() -> Parser<'a, u8, ()> {
-    one_of(b" \t").repeat(0..).discard() - (eol() | end())
+    one_of(b" \t").repeat(0..).discard() - eol()
 }
 
 fn string<'a>() -> Parser<'a, u8, String> {
@@ -274,32 +323,36 @@ fn extent<'a>(ctx: &SharedContext) -> Parser<'a, u8, Directive> {
 }
 
 fn map<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, MapBlock> {
-    push_scope(ctx);
     let map = seq(KEYWORD_MAP) - eol();
-    let srid_and_extent = (srid(ctx) - trailing_space()) + extent(ctx);
-    let extent_and_srid = (extent(ctx) - trailing_space()) + srid(ctx);
-    let expressions = (srid_and_extent | extent_and_srid) + list(data(ctx), trailing_space());
-
-    with_finalizer(
-        (map * expressions)
-            .map(|((e1, e2), datas)| MapBlock {
-                directives: [vec![e1, e2], datas].concat(),
-            })
-            .name("map"),
-        move || pop_scope(ctx),
-    )
+    let body = srid(ctx) | extent(ctx) | data(ctx);
+    let expressions = list(body, trailing_space());
+    (map * expressions)
+        .map(|directives| MapBlock { directives })
+        .name("map")
+    // with_init(
+    //     with_finalizer(
+    //         (map * expressions)
+    //             .map(|directives| MapBlock { directives })
+    //             .name("map"),
+    //         move || pop_scope(&ctx.clone()),
+    //     ),
+    //     move || push_scope(&ctx.clone()),
+    // )
 }
 
 fn source<'a>(ctx: &SharedContext) -> Parser<'a, u8, Directive> {
-    let source = seq(KEYWORD_SOURCE) - trailing_space();
+    let source = seq(KEYWORD_SOURCE) - spacing();
     let driver = (seq(SOURCE_DRIVER_GEOJSON).map(|_| Driver::Geojson)
         | seq(SOURCE_DRIVER_POSTGIS).map(|_| Driver::Postgis)
         | seq(SOURCE_DRIVER_SHAPEFILE).map(|_| Driver::Shapefile))
-        - trailing_space();
+        - spacing();
     let path = string();
-    let opt_srid = trailing_space() * (number() - trailing_space()).opt();
+    let opt_srid = (spacing() * number()).opt();
     let everything = source * (driver + path + opt_srid);
-    everything.map(|((driver, path), srid)| Source { driver, path, srid }.into())
+    trace(
+        "source",
+        everything.map(|((driver, path), srid)| Source { driver, path, srid }.into()),
+    )
 }
 
 fn datatype<'a>(ctx: &SharedContext) -> Parser<'a, u8, DataType> {
@@ -308,25 +361,28 @@ fn datatype<'a>(ctx: &SharedContext) -> Parser<'a, u8, DataType> {
         | seq(DATATYPE_BOOLEAN).map(|_| DataType::Boolean)
 }
 
-fn constructor<'a>(ctx: &SharedContext) -> Parser<'a, u8, Constructor> {
+fn constructor<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, Constructor> {
     let sel = ((seq(KEYWORD_SELECT) - spacing()) * (string() + (spacing() * datatype(ctx))))
         .map(|(selector, datatype)| Constructor::Select { selector, datatype });
-    let val = literal().map(|l| Constructor::Lit(l));
-    sel | val
+    let val = value(ctx).map(|v| Constructor::Val(v));
+    trace("constructor", sel | val)
 }
 
 fn data<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, Directive> {
-    let data = seq(KEYWORD_DATA) - spacing();
+    let data = trace("data_keyword", seq(KEYWORD_DATA)) - spacing();
     let identifier = ident() - spacing();
-    let constructor = constructor(ctx) - trailing_space();
-    (data * (identifier + constructor)).map(move |(ident, constructor)| {
-        let data = Data {
-            constructor: Box::new(constructor),
-            ident: ident.clone(),
-        };
-        put_data(ctx, ident, data.clone());
-        data.into()
-    })
+    let constructor = constructor(ctx);
+    trace(
+        "data",
+        (data * (identifier + constructor)).map(move |(ident, constructor)| {
+            let data = Data {
+                constructor: Box::new(constructor),
+                ident: ident.clone(),
+            };
+            put_data(ctx, ident, data.clone());
+            data.into()
+        }),
+    )
 }
 
 fn function<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, FunctionCall> {
@@ -339,15 +395,24 @@ fn function<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, FunctionCall> {
 }
 
 fn value<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, Value> {
-    inc_depth(ctx);
     let lit = literal().map(|l| Value::Lit(l));
     let dat = ident()
-        .convert(move |s| get_data(ctx, s.clone()).ok_or(ParseError::DataNotInScope(s)))
+        .convert(move |s| match get_data(ctx, s.clone()) {
+            Some(d) => Ok(d),
+            _ => {
+                println!("NO DATA FOR: '{}'", s.clone());
+                Err(ParseError::DataNotInScope(s.clone()))
+            }
+        })
+        // .convert(move |s| get_data(ctx, s.clone()).ok_or(ParseError::DataNotInScope(s)))
         .map(|d| Value::Data(d));
     let fun = function(ctx).map(|f| Value::Fn(f));
-    with_finalizer(lit | dat | fun, move || {
-        dec_depth(ctx);
-    })
+    with_init(
+        with_finalizer(lit | fun | dat, move || {
+            dec_depth(&ctx.clone());
+        }),
+        move || inc_depth(&ctx.clone()),
+    )
 }
 
 const PRED_OP_EQ: &[u8] = b"=";
@@ -364,17 +429,22 @@ fn predicate<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, Predicate> {
         | seq(PRED_OP_GTE)
         | seq(PRED_OP_LT)
         | seq(PRED_OP_LTE);
-    (value(ctx) - spacing() + op + value(ctx) - spacing()).convert(|((left, op), right)| match op {
-        PRED_OP_EQ => Ok(Predicate::Equal(pair(left, right))),
-        PRED_OP_NOTEQ => Ok(Predicate::NotEqual(pair(left, right))),
-        PRED_OP_GT => Ok(Predicate::GreaterThan(pair(left, right))),
-        PRED_OP_GTE => Ok(Predicate::GreaterThanOrEqual(pair(left, right))),
-        PRED_OP_LT => Ok(Predicate::LesserThan(pair(left, right))),
-        PRED_OP_LTE => Ok(Predicate::LesserThanOrEqual(pair(left, right))),
-        _ => Err(ParseError::UnknownPredicate(
-            String::from_utf8(op.into()).unwrap_or(String::new()),
-        )),
-    })
+    trace(
+        "predicate",
+        ((value(ctx) - spacing()) + (op - spacing()) + value(ctx)).convert(
+            |((left, op), right)| match op {
+                PRED_OP_EQ => Ok(Predicate::Equal(pair(left, right))),
+                PRED_OP_NOTEQ => Ok(Predicate::NotEqual(pair(left, right))),
+                PRED_OP_GT => Ok(Predicate::GreaterThan(pair(left, right))),
+                PRED_OP_GTE => Ok(Predicate::GreaterThanOrEqual(pair(left, right))),
+                PRED_OP_LT => Ok(Predicate::LesserThan(pair(left, right))),
+                PRED_OP_LTE => Ok(Predicate::LesserThanOrEqual(pair(left, right))),
+                _ => Err(ParseError::UnknownPredicate(
+                    String::from_utf8(op.into()).unwrap_or(String::new()),
+                )),
+            },
+        ),
+    )
 }
 
 fn circle<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, Command> {
@@ -404,43 +474,59 @@ fn label<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, Command> {
 }
 
 fn command<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, Command> {
-    (circle(ctx) | square(ctx) | fill(ctx) | stroke(ctx) | pattern(ctx) | label(ctx))
-        - trailing_space()
+    trace(
+        "command",
+        circle(ctx) | square(ctx) | fill(ctx) | stroke(ctx) | pattern(ctx) | label(ctx),
+    )
 }
 
 fn symbology<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, Directive> {
     let kw = seq(KEYWORD_SYM) - spacing();
     let pred = predicate(ctx) - spacing();
-    let commands = ((seq(KEYWORD_COMMAND) - spacing()) * command(ctx)).repeat(1..);
-    (kw * (pred + commands)).map(|(predicate, consequent)| {
-        Sym {
-            predicate,
-            consequent,
-        }
-        .into()
-    })
+    let sep = seq(KEYWORD_COMMAND) - spacing().opt();
+    let command = command(ctx) - spacing().opt();
+    let commands = (sep * command).repeat(1..);
+
+    trace(
+        "sym",
+        (kw * (pred + commands)).map(|(predicate, consequent)| {
+            Sym {
+                predicate,
+                consequent,
+            }
+            .into()
+        }),
+    )
 }
 
 fn directive<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, Directive> {
-    source(ctx) | data(ctx) | symbology(ctx)
+    trace("directive", source(ctx) | data(ctx) | symbology(ctx))
 }
 
 fn layer<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, LayerBlock> {
-    push_scope(ctx);
     let layer = seq(KEYWORD_LAYER) - trailing_space();
-    let sep = eol();
+    let sep = trailing_space();
     let directives = list(directive(ctx), sep);
 
-    with_finalizer(
-        (layer * directives)
-            .map(|directives| LayerBlock { directives })
-            .name("layer"),
-        move || pop_scope(ctx),
+    trace(
+        "layer",
+        with_init(
+            with_finalizer(
+                (layer * directives)
+                    .map(|directives| LayerBlock { directives })
+                    .name("layer"),
+                move || pop_scope(&ctx.clone()),
+            ),
+            move || push_scope(&ctx.clone()),
+        ),
     )
 }
 
 pub fn parse<'a>(map_str: &'a str, ctx: &SharedContext) -> Result<MapSpec, ParseError> {
-    let everything = map(ctx) + list(layer(ctx), block_sep()).name("Everything");
+    push_scope(ctx);
+    let map = map(ctx) - block_sep();
+    let layers = list(layer(ctx), block_sep());
+    let everything = map + layers;
     everything
         .map(|(map, layers)| MapSpec { map, layers })
         .parse(map_str.as_bytes())
@@ -482,6 +568,7 @@ const FALSE: &[u8] = b"false";
 #[cfg(test)]
 mod parser_test {
     use super::*;
+    use crate::ast::*;
     #[test]
     fn trailing_space_works() {
         let map_str = "aaaaaaaaaaaaaa
@@ -501,8 +588,192 @@ bbbbbbbbbbbbbb
         );
     }
     #[test]
+    fn map_block_works() {
+        let map_str = "map
+srid 3857
+extent 11111 22222.2 333333 444444
+data blue  rgb(0, 0, 255)
+        ";
+
+        let result = map(&new_context()).parse(map_str.as_bytes());
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().directives.len(), 3);
+    }
+
+    #[test]
     fn parse_basic() {
         let map_str = include_str!("../data/map-format-basic");
+        // let expected = MapSpec {
+        //     map: MapBlock {
+        //         directives: [
+        //             Srid(Srid { value: 3857 }),
+        //             Extent(Extent {
+        //                 minx: Integer(11111),
+        //                 miny: Integer(333333),
+        //                 maxx: Float(22222.2),
+        //                 maxy: Integer(444444),
+        //             }),
+        //             Data(Data {
+        //                 ident: "blue",
+        //                 constructor: Val(Fn(FunctionCall {
+        //                     name: "rgb",
+        //                     args: [
+        //                         Lit(Number(Integer(0))),
+        //                         Lit(Number(Integer(0))),
+        //                         Lit(Number(Integer(255))),
+        //                     ],
+        //                 })),
+        //             }),
+        //         ],
+        //     },
+        //     layers: [
+        //         LayerBlock {
+        //             directives: [
+        //                 Source(Source {
+        //                     driver: Geojson,
+        //                     path: "files/layer1.geojson",
+        //                     srid: None,
+        //                 }),
+        //                 Data(Data {
+        //                     ident: "prop",
+        //                     constructor: Select {
+        //                         selector: "colum name",
+        //                         datatype: String,
+        //                     },
+        //                 }),
+        //                 Data(Data {
+        //                     ident: "threshold",
+        //                     constructor: Val(Lit(Number(Integer(100)))),
+        //                 }),
+        //                 Sym(Sym {
+        //                     predicate: LesserThan(ValuePair(
+        //                         Data(Data {
+        //                             ident: "prop",
+        //                             constructor: Select {
+        //                                 selector: "colum name",
+        //                                 datatype: String,
+        //                             },
+        //                         }),
+        //                         Data(Data {
+        //                             ident: "threshold",
+        //                             constructor: Val(Lit(Number(Integer(100)))),
+        //                         }),
+        //                     )),
+        //                     consequent: [Fill(Fill {
+        //                         color: Data(Data {
+        //                             ident: "blue",
+        //                             constructor: Val(Fn(FunctionCall {
+        //                                 name: "rgb",
+        //                                 args: [
+        //                                     Lit(Number(Integer(0))),
+        //                                     Lit(Number(Integer(0))),
+        //                                     Lit(Number(Integer(255))),
+        //                                 ],
+        //                             })),
+        //                         }),
+        //                     })],
+        //                 }),
+        //             ],
+        //         },
+        //         LayerBlock {
+        //             directives: [
+        //                 Source(Source {
+        //                     driver: Geojson,
+        //                     path: "files/layer2.geojson",
+        //                     srid: None,
+        //                 }),
+        //                 Data(Data {
+        //                     ident: "prop1",
+        //                     constructor: Select {
+        //                         selector: "col1",
+        //                         datatype: String,
+        //                     },
+        //                 }),
+        //                 Data(Data {
+        //                     ident: "prop2",
+        //                     constructor: Select {
+        //                         selector: "col2",
+        //                         datatype: String,
+        //                     },
+        //                 }),
+        //                 Data(Data {
+        //                     ident: "green",
+        //                     constructor: Val(Fn(FunctionCall {
+        //                         name: "rgb",
+        //                         args: [
+        //                             Lit(Number(Integer(0))),
+        //                             Lit(Number(Integer(255))),
+        //                             Lit(Number(Integer(0))),
+        //                         ],
+        //                     })),
+        //                 }),
+        //                 Sym(Sym {
+        //                     predicate: Equal(ValuePair(
+        //                         Data(Data {
+        //                             ident: "prop1",
+        //                             constructor: Select {
+        //                                 selector: "col1",
+        //                                 datatype: String,
+        //                             },
+        //                         }),
+        //                         Lit(String("park")),
+        //                     )),
+        //                     consequent: [
+        //                         Fill(Fill {
+        //                             color: Data(Data {
+        //                                 ident: "green",
+        //                                 constructor: Val(Fn(FunctionCall {
+        //                                     name: "rgb",
+        //                                     args: [
+        //                                         Lit(Number(Integer(0))),
+        //                                         Lit(Number(Integer(255))),
+        //                                         Lit(Number(Integer(0))),
+        //                                     ],
+        //                                 })),
+        //                             }),
+        //                         }),
+        //                         Stroke(Stroke {
+        //                             color: Data(Data {
+        //                                 ident: "blue",
+        //                                 constructor: Val(Fn(FunctionCall {
+        //                                     name: "rgb",
+        //                                     args: [
+        //                                         Lit(Number(Integer(0))),
+        //                                         Lit(Number(Integer(0))),
+        //                                         Lit(Number(Integer(255))),
+        //                                     ],
+        //                                 })),
+        //                             }),
+        //                             size: Lit(Number(Integer(2))),
+        //                         }),
+        //                     ],
+        //                 }),
+        //                 Sym(Sym {
+        //                     predicate: Equal(ValuePair(
+        //                         Data(Data {
+        //                             ident: "prop2",
+        //                             constructor: Select {
+        //                                 selector: "col2",
+        //                                 datatype: String,
+        //                             },
+        //                         }),
+        //                         Lit(String("public")),
+        //                     )),
+        //                     consequent: [Pattern(Pattern {
+        //                         path: Lit(String("files/dot.svg")),
+        //                     })],
+        //                 }),
+        //             ],
+        //         },
+        //         LayerBlock {
+        //             directives: [Source(Source {
+        //                 driver: Postgis,
+        //                 path: "user:pwd@localhost/schema_name/table_name",
+        //                 srid: None,
+        //             })],
+        //         },
+        //     ],
+        // };
 
         match parse(map_str, &new_context()) {
             Ok(spec) => {
