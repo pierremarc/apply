@@ -224,8 +224,14 @@ fn block_sep<'a>() -> Parser<'a, u8, ()> {
     trace("block_sep", first_eol - second_eol).name("block_sep")
 }
 
+fn strict_spacing<'a>() -> Parser<'a, u8, ()> {
+    one_of(b" \t").repeat(1..).discard()
+}
+
 fn spacing<'a>() -> Parser<'a, u8, ()> {
-    one_of(b" \t").repeat(1..).discard().name("spacing")
+    let strict = strict_spacing();
+    let multiline = (one_of(b" \t").repeat(0..).discard()) - (eol() + strict_spacing());
+    multiline | strict
 }
 
 fn trailing_space<'a>() -> Parser<'a, u8, ()> {
@@ -603,6 +609,20 @@ data blue  rgb(0, 0, 255)
     #[test]
     fn parse_basic() {
         let map_str = include_str!("../data/map-format-basic");
+
+        match parse(map_str, &new_context()) {
+            Ok(spec) => {
+                print!("\n**OK**\n{:?}\n", spec);
+            }
+            Err(err) => {
+                panic!("\n**ERROR**\n{}\n", err);
+            }
+        };
+    }
+
+    #[test]
+    fn parse_multiline() {
+        let map_str = include_str!("../data/map-format-multiline");
 
         match parse(map_str, &new_context()) {
             Ok(spec) => {
