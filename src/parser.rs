@@ -47,17 +47,17 @@ impl Scope {
     }
 
     pub fn find_value(&self, name: String) -> Option<Data> {
-        println!(
-            "find_value({}) -> {}",
-            &name,
-            self.values
-                .keys()
-                .collect::<Vec<_>>()
-                .into_iter()
-                .map(|s| s.clone())
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
+        // println!(
+        //     "find_value({}) -> {}",
+        //     &name,
+        //     self.values
+        //         .keys()
+        //         .collect::<Vec<_>>()
+        //         .into_iter()
+        //         .map(|s| s.clone())
+        //         .collect::<Vec<_>>()
+        //         .join(", ")
+        // );
         self.values.get(&name).map(|v| v.clone())
     }
 }
@@ -117,7 +117,7 @@ pub fn new_context() -> SharedContext {
 pub fn inc_depth(ctx: &SharedContext) {
     let mut ctx = ctx.borrow_mut();
     ctx.inc_depth();
-    assert!(ctx.depth < 32);
+    assert!(ctx.depth < 128);
     // println!("Depth: {}", ctx.depth);
 }
 
@@ -129,13 +129,13 @@ pub fn dec_depth(ctx: &SharedContext) {
 pub fn push_scope(ctx: &SharedContext) {
     let mut ctx = ctx.borrow_mut();
     ctx.push_scope();
-    println!(">> push_scope {}", ctx.scopes.len());
+    // println!(">> push_scope {}", ctx.scopes.len());
 }
 
 pub fn pop_scope(ctx: &SharedContext) {
     let mut ctx = ctx.borrow_mut();
     ctx.pop_scope();
-    println!(">> pop_scope {}", ctx.scopes.len());
+    // println!(">> pop_scope {}", ctx.scopes.len());
 }
 
 pub fn get_data(ctx: &SharedContext, name: String) -> Option<Data> {
@@ -250,8 +250,8 @@ fn parent<'a, O>(p: Parser<'a, u8, O>) -> Parser<'a, u8, O>
 where
     O: 'a,
 {
-    let left_parent = sym(b'(');
-    let right_parent = sym(b')');
+    let left_parent = trace("parent open", sym(b'('));
+    let right_parent = trace("parent close", sym(b')'));
     left_parent * (spaced(p) - right_parent)
 }
 
@@ -512,24 +512,19 @@ fn predicate_group<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, PredGroup> {
     )
 }
 
-fn predicate<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, PredGroup> {
-    let start = trace(
-        "predicate start",
-        spaced(parent(
-            parent(predicate_group(ctx) | predicate_single(ctx))
-                | predicate_group(ctx)
-                | predicate_single(ctx),
-        )) | spaced(predicate_group(ctx))
-            | spaced(predicate_single(ctx)),
-    );
-
-    let right = spaced(parent(
-        parent(predicate_group(ctx) | predicate_single(ctx))
-            | predicate_group(ctx)
+fn any_pred<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, PredGroup> {
+    spaced(
+        trace(
+            "parent",
+            parent(call(move || any_pred(ctx)) | predicate_group(ctx) | predicate_single(ctx)),
+        ) | predicate_group(ctx)
             | predicate_single(ctx),
-    )) | spaced(predicate_group(ctx))
-        | spaced(predicate_single(ctx));
+    )
+}
 
+fn predicate<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, PredGroup> {
+    let start = trace("predicate start", any_pred(ctx));
+    let right = any_pred(ctx);
     let op = spaced(seq(KEYWORD_OR) | seq(KEYWORD_AND));
     let op_right = spaced(op) + spaced(right);
     let next_list = trace("next_list", op_right.repeat(0..));
@@ -751,6 +746,19 @@ data blue  rgb(0, 0, 255)
     #[test]
     fn parse_pred_group() {
         let map_str = include_str!("../data/map-format-pred-group");
+
+        match parse(map_str, &new_context()) {
+            Ok(spec) => {
+                print!("\n**OK**\n{:?}\n", spec);
+            }
+            Err(err) => {
+                panic!("\n**ERROR**\n{}\n", err);
+            }
+        };
+    }
+    #[test]
+    fn parse_pred_nested() {
+        let map_str = include_str!("../data/map-format-pred-nested");
 
         match parse(map_str, &new_context()) {
             Ok(spec) => {

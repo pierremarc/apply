@@ -1,0 +1,20 @@
+map
+srid 3857
+extent 11111 22222.2 333333 444444
+data blue  rgb(0, 0, 255)
+data prop1 select "col1" string
+data prop2 select "col2" number
+data red rgb(255, 30, 0)
+
+
+layer 
+source postgis "user:pwd@localhost/schema_name/table_name" 31370
+sym ((prop1 = "bench"
+  | prop1 = "chair")
+  | prop1 = "something else")
+  & prop2 >= 12
+  -> circle 6 
+  -> fill red
+sym prop1 = "bin" 
+  -> square 8 
+  -> fill rgb(12, 34, 56)
