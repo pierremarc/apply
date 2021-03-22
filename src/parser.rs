@@ -1,4 +1,4 @@
-use pom::parser::{call, end, list, none_of, one_of, seq, sym, Parser};
+use pom::parser::{any, call, end, list, none_of, one_of, seq, sym, Parser};
 use pom::Error as PomError;
 use std::collections::HashMap;
 use std::fmt;
@@ -8,8 +8,8 @@ use std::{cell::RefCell, cmp::max};
 
 use crate::ast::{
     pair, Circle, Command, Constructor, Data, DataType, Directive, Driver, Extent, Fill,
-    FunctionCall, Label, LayerBlock, Literal, MapBlock, MapSpec, Num, Pattern, Predicate, Source,
-    Square, Srid, Stroke, Sym, Value,
+    FunctionCall, Label, LayerBlock, Literal, MapBlock, MapSpec, Num, Pattern, PredGroup,
+    Predicate, Source, Square, Srid, Stroke, Sym, Value,
 };
 #[derive(Debug, Clone)]
 pub enum ParseError {
@@ -17,6 +17,7 @@ pub enum ParseError {
     Wrap(PomError),
     DataNotInScope(String),
     UnknownPredicate(String),
+    UnknownPredicateGrouping(String),
 }
 
 impl fmt::Display for ParseError {
@@ -26,6 +27,7 @@ impl fmt::Display for ParseError {
             Self::Wrap(e) => write!(f, "PomError: {}", e),
             Self::DataNotInScope(e) => write!(f, "Data Not In Scope: \"{}\"", e),
             Self::UnknownPredicate(e) => write!(f, "Unknown Predicate: \"{}\"", e),
+            Self::UnknownPredicateGrouping(e) => write!(f, "Unknown Predicate Grouping: \"{}\"", e),
         }
     }
 }
@@ -234,8 +236,30 @@ fn spacing<'a>() -> Parser<'a, u8, ()> {
     multiline | strict
 }
 
+fn opt_spacing<'a>() -> Parser<'a, u8, ()> {
+    let strict = one_of(b" \t").repeat(0..).discard();
+    let multiline = (one_of(b" \t").repeat(0..).discard()) - (eol() + strict_spacing());
+    multiline | strict
+}
+
 fn trailing_space<'a>() -> Parser<'a, u8, ()> {
     one_of(b" \t").repeat(0..).discard() - eol()
+}
+
+fn parent<'a, O>(p: Parser<'a, u8, O>) -> Parser<'a, u8, O>
+where
+    O: 'a,
+{
+    let left_parent = sym(b'(');
+    let right_parent = sym(b')');
+    left_parent * (spaced(p) - right_parent)
+}
+
+fn spaced<'a, O>(p: Parser<'a, u8, O>) -> Parser<'a, u8, O>
+where
+    O: 'a,
+{
+    opt_spacing() * (p - opt_spacing())
 }
 
 fn string<'a>() -> Parser<'a, u8, String> {
@@ -392,9 +416,9 @@ fn data<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, Directive> {
 }
 
 fn function<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, FunctionCall> {
-    let sep = spacing().opt() + sym(b',') + spacing().opt();
+    let sep = opt_spacing() + sym(b',') + opt_spacing();
     let args: Parser<'a, u8, Vec<Value>> = list(call(move || value(ctx)), sep);
-    let f = ident() - sym(b'(') + args - sym(b')');
+    let f = ident() + parent(args);
 
     f.map(|(name, args)| FunctionCall { name, args })
         .name("function")
@@ -421,36 +445,113 @@ fn value<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, Value> {
     )
 }
 
-const PRED_OP_EQ: &[u8] = b"=";
 const PRED_OP_NOTEQ: &[u8] = b"!=";
-const PRED_OP_GT: &[u8] = b">";
-const PRED_OP_GTE: &[u8] = b">=";
-const PRED_OP_LT: &[u8] = b"<";
 const PRED_OP_LTE: &[u8] = b"<=";
+const PRED_OP_GTE: &[u8] = b">=";
+const PRED_OP_EQ: &[u8] = b"=";
+const PRED_OP_GT: &[u8] = b">";
+const PRED_OP_LT: &[u8] = b"<";
 
-fn predicate<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, Predicate> {
-    let op = seq(PRED_OP_EQ)
-        | seq(PRED_OP_NOTEQ)
-        | seq(PRED_OP_GT)
-        | seq(PRED_OP_GTE)
-        | seq(PRED_OP_LT)
-        | seq(PRED_OP_LTE);
+fn predicate_single<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, PredGroup> {
+    let op = trace(
+        "pred op",
+        seq(PRED_OP_NOTEQ)
+            | seq(PRED_OP_LTE)
+            | seq(PRED_OP_GTE)
+            | seq(PRED_OP_EQ)
+            | seq(PRED_OP_GT)
+            | seq(PRED_OP_LT),
+    );
     trace(
         "predicate",
-        ((value(ctx) - spacing()) + (op - spacing()) + value(ctx)).convert(
-            |((left, op), right)| match op {
-                PRED_OP_EQ => Ok(Predicate::Equal(pair(left, right))),
-                PRED_OP_NOTEQ => Ok(Predicate::NotEqual(pair(left, right))),
-                PRED_OP_GT => Ok(Predicate::GreaterThan(pair(left, right))),
-                PRED_OP_GTE => Ok(Predicate::GreaterThanOrEqual(pair(left, right))),
-                PRED_OP_LT => Ok(Predicate::LesserThan(pair(left, right))),
-                PRED_OP_LTE => Ok(Predicate::LesserThanOrEqual(pair(left, right))),
-                _ => Err(ParseError::UnknownPredicate(
-                    String::from_utf8(op.into()).unwrap_or(String::new()),
-                )),
-            },
-        ),
+        spaced((value(ctx)) + spaced(op) + value(ctx)).convert(|((left, op), right)| match op {
+            PRED_OP_EQ => Ok(PredGroup::Pred(Predicate::Equal(pair(left, right)))),
+            PRED_OP_NOTEQ => Ok(PredGroup::Pred(Predicate::NotEqual(pair(left, right)))),
+            PRED_OP_GT => Ok(PredGroup::Pred(Predicate::GreaterThan(pair(left, right)))),
+            PRED_OP_GTE => Ok(PredGroup::Pred(Predicate::GreaterThanOrEqual(pair(
+                left, right,
+            )))),
+            PRED_OP_LT => Ok(PredGroup::Pred(Predicate::LesserThan(pair(left, right)))),
+            PRED_OP_LTE => Ok(PredGroup::Pred(Predicate::LesserThanOrEqual(pair(
+                left, right,
+            )))),
+            _ => Err(ParseError::UnknownPredicate(
+                String::from_utf8(op.into()).unwrap_or(String::new()),
+            )),
+        }),
     )
+}
+
+fn predicate_group<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, PredGroup> {
+    let start = predicate_single(ctx) - opt_spacing();
+    let op = opt_spacing() * (seq(KEYWORD_OR) | seq(KEYWORD_AND));
+    let right = opt_spacing() * predicate_single(ctx);
+    let op_right = op + right;
+    let next_list = op_right.repeat(1..);
+
+    trace(
+        "predicate_group",
+        (start + next_list).map(|(start, next_list)| {
+            next_list
+                .into_iter()
+                .fold(
+                    start,
+                    |left: PredGroup, (op, right): (&[u8], PredGroup)| match op {
+                        KEYWORD_AND => PredGroup::And {
+                            left: Box::new(left),
+                            right: Box::new(right),
+                        },
+                        KEYWORD_OR => PredGroup::Or {
+                            left: Box::new(left),
+                            right: Box::new(right),
+                        },
+                        _ => PredGroup::Empty,
+                    },
+                )
+        }),
+    )
+}
+
+fn predicate<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, PredGroup> {
+    let start = trace(
+        "predicate start",
+        spaced(parent(
+            parent(predicate_group(ctx) | predicate_single(ctx))
+                | predicate_group(ctx)
+                | predicate_single(ctx),
+        )) | spaced(predicate_group(ctx))
+            | spaced(predicate_single(ctx)),
+    );
+
+    let right = spaced(parent(
+        parent(predicate_group(ctx) | predicate_single(ctx))
+            | predicate_group(ctx)
+            | predicate_single(ctx),
+    )) | spaced(predicate_group(ctx))
+        | spaced(predicate_single(ctx));
+
+    let op = spaced(seq(KEYWORD_OR) | seq(KEYWORD_AND));
+    let op_right = spaced(op) + spaced(right);
+    let next_list = trace("next_list", op_right.repeat(0..));
+
+    (start + next_list).map(|(start, next_list)| {
+        next_list
+            .into_iter()
+            .fold(
+                start,
+                |left: PredGroup, (op, right): (&[u8], PredGroup)| match op {
+                    KEYWORD_AND => PredGroup::And {
+                        left: Box::new(left),
+                        right: Box::new(right),
+                    },
+                    KEYWORD_OR => PredGroup::Or {
+                        left: Box::new(left),
+                        right: Box::new(right),
+                    },
+                    _ => PredGroup::Empty,
+                },
+            )
+    })
 }
 
 fn circle<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, Command> {
@@ -488,9 +589,9 @@ fn command<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, Command> {
 
 fn symbology<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, Directive> {
     let kw = seq(KEYWORD_SYM) - spacing();
-    let pred = predicate(ctx) - spacing();
-    let sep = seq(KEYWORD_COMMAND) - spacing().opt();
-    let command = command(ctx) - spacing().opt();
+    let pred = predicate(ctx) - opt_spacing();
+    let sep = seq(KEYWORD_COMMAND) - opt_spacing();
+    let command = command(ctx) - opt_spacing();
     let commands = (sep * command).repeat(1..);
 
     trace(
@@ -548,6 +649,8 @@ const KEYWORD_DATA: &[u8] = b"data";
 const KEYWORD_SYM: &[u8] = b"sym";
 const KEYWORD_SELECT: &[u8] = b"select";
 const KEYWORD_COMMAND: &[u8] = b"->";
+const KEYWORD_OR: &[u8] = b"|";
+const KEYWORD_AND: &[u8] = b"&";
 
 const COMMAND_CIRCLE: &[u8] = b"circle";
 const COMMAND_SQUARE: &[u8] = b"square";
@@ -607,6 +710,17 @@ data blue  rgb(0, 0, 255)
     }
 
     #[test]
+    fn parent_works() {
+        let map_str = "(truc )";
+        let token = b"truc";
+        let parser = parent(seq(token));
+        let result = dbg!(parser.parse(map_str.as_bytes()));
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), token);
+    }
+
+    #[test]
     fn parse_basic() {
         let map_str = include_str!("../data/map-format-basic");
 
@@ -623,6 +737,20 @@ data blue  rgb(0, 0, 255)
     #[test]
     fn parse_multiline() {
         let map_str = include_str!("../data/map-format-multiline");
+
+        match parse(map_str, &new_context()) {
+            Ok(spec) => {
+                print!("\n**OK**\n{:?}\n", spec);
+            }
+            Err(err) => {
+                panic!("\n**ERROR**\n{}\n", err);
+            }
+        };
+    }
+
+    #[test]
+    fn parse_pred_group() {
+        let map_str = include_str!("../data/map-format-pred-group");
 
         match parse(map_str, &new_context()) {
             Ok(spec) => {

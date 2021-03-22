@@ -195,6 +195,20 @@ pub enum Predicate {
 }
 
 #[derive(Debug, Clone)]
+pub enum PredGroup {
+    Empty,
+    Pred(Predicate),
+    Or {
+        left: Box<PredGroup>,
+        right: Box<PredGroup>,
+    },
+    And {
+        left: Box<PredGroup>,
+        right: Box<PredGroup>,
+    },
+}
+
+#[derive(Debug, Clone)]
 pub struct Circle {
     pub radius: Value,
 }
@@ -236,7 +250,7 @@ pub enum Command {
 
 #[derive(Debug, Clone)]
 pub struct Sym {
-    pub predicate: Predicate,
+    pub predicate: PredGroup,
     pub consequent: Vec<Command>,
 }
 
