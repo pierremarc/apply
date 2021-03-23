@@ -6,6 +6,7 @@ data prop1 select "col1" string
 data prop2 select "col2" number
 data red rgb(255, 30, 0)
 data truc "a string"
+data green  rgb(0, 255, 0)
 
 
 layer 
@@ -23,3 +24,15 @@ sym
 sym prop1 = "bin" 
   -> square 8 
   -> fill rgb(12, 34, 56)
+
+
+layer 
+source geojson "files/layer2.geojson"
+data prop1 select "col1" string
+data prop2 select "col2" string
+sym prop1 = "park" 
+  | prop1 = "garden"
+  -> fill green 
+  -> stroke blue 2 
+sym prop2 = "public" 
+  -> pattern "files/dot.svg"
