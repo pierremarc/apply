@@ -192,31 +192,31 @@ pub enum Shape {
     Circle,
 }
 
-fn point(x: f64, y: f64) -> Point<f64> {
+pub fn point(x: f64, y: f64) -> Point<f64> {
     Point::new(x, y)
 }
 
-fn move_to(x: f64, y: f64) -> Op {
+pub fn move_to(x: f64, y: f64) -> Op {
     Op::Move(point(x, y))
 }
 
-fn line_to(x: f64, y: f64) -> Op {
+pub fn line_to(x: f64, y: f64) -> Op {
     Op::Line(point(x, y))
 }
 
-fn close() -> Op {
+pub fn close() -> Op {
     Op::Close
 }
 
-fn fill(color: String) -> Op {
+pub fn fill(color: String) -> Op {
     Op::Fill(color)
 }
 
-fn stroke(color: String, size: f64) -> Op {
+pub fn stroke(color: String, size: f64) -> Op {
     Op::Stroke { color, size }
 }
 
-fn text(text: String, font: String, color: String, size: f64, x: f64, y: f64) -> Op {
+pub fn text(text: String, font: String, color: String, size: f64, x: f64, y: f64) -> Op {
     Op::Text {
         text,
         font,
@@ -228,14 +228,14 @@ fn text(text: String, font: String, color: String, size: f64, x: f64, y: f64) ->
 }
 
 impl Shape {
-    fn draw(&self, center: &Point<f64>, size: f64) -> Vec<Op> {
+    pub fn draw(&self, center: &Point<f64>, size: f64) -> Vec<Op> {
         match self {
             Shape::Square => self.draw_square(center, size),
             Shape::Circle => self.draw_circle(center, size),
         }
     }
 
-    fn draw_square(&self, center: &Point<f64>, size: f64) -> Vec<Op> {
+    pub fn draw_square(&self, center: &Point<f64>, size: f64) -> Vec<Op> {
         let x = center.x();
         let y = center.y();
         let half = size / 2.0;
@@ -247,7 +247,7 @@ impl Shape {
             close(),
         ]
     }
-    fn draw_circle(&self, center: &Point<f64>, size: f64) -> Vec<Op> {
+    pub fn draw_circle(&self, center: &Point<f64>, size: f64) -> Vec<Op> {
         let x = center.x() + size;
         let y = center.y();
         let steps = if size * 10.0 > 360.0 {
@@ -268,13 +268,13 @@ impl Shape {
 }
 
 pub struct MarkerSpec {
-    shape: Shape,
-    color: String,
-    size: f64,
+    pub shape: Shape,
+    pub color: String,
+    pub size: f64,
 }
 
 impl MarkerSpec {
-    fn draw(&self, center: &Point<f64>) -> Vec<Op> {
+    pub fn draw(&self, center: &Point<f64>) -> Vec<Op> {
         let mut ops = self.shape.draw(center, self.size);
         ops.push(fill(self.color.clone()));
         ops
@@ -282,14 +282,14 @@ impl MarkerSpec {
 }
 
 pub struct TextSpec {
-    font: String,
-    color: String,
-    size: f64,
-    content: String,
+    pub font: String,
+    pub color: String,
+    pub size: f64,
+    pub content: String,
 }
 
 impl TextSpec {
-    fn draw(&self, p: &Point<f64>) -> Vec<Op> {
+    pub fn draw(&self, p: &Point<f64>) -> Vec<Op> {
         vec![text(
             self.content.clone(),
             self.font.clone(),
@@ -306,14 +306,14 @@ pub enum Style {
 }
 
 impl Style {
-    fn draw(&self, geom: Geometry<f64>) -> Vec<Op> {
+    pub fn draw(&self, geom: Geometry<f64>) -> Vec<Op> {
         match geom {
             Geometry::Point(p) => self.draw_point(p),
             _ => Vec::new(),
         }
     }
 
-    fn draw_point(&self, point: Point<f64>) -> Vec<Op> {
+    pub fn draw_point(&self, point: Point<f64>) -> Vec<Op> {
         match self {
             Style::Marker(spec) => spec.draw(&point),
             Style::Text(spec) => spec.draw(&point),
@@ -321,7 +321,7 @@ impl Style {
     }
 }
 
-mod StyleFn {
+pub mod style_fn {
     use crate::{MarkerSpec, Shape, Style, TextSpec};
 
     pub fn circle(color: String, size: f64) -> Style {
@@ -350,7 +350,7 @@ mod StyleFn {
     }
 }
 
-fn parse_point(value: &Value) -> Option<Point<f64>> {
+pub fn parse_point(value: &Value) -> Option<Point<f64>> {
     let x = value.get("coordinates")?.get(0)?.as_f64()?;
     let y = value.get("coordinates")?.get(1)?.as_f64()?;
     Some(point(x, y))
@@ -394,7 +394,7 @@ mod apply {
         let data: Value = serde_json::from_str(json_str).unwrap();
         let features_path = Path::new().add("features");
 
-        let result = features_path
+        let _result = features_path
             .view(&data)
             .and_then(|val| val.as_array())
             .map(|features| {
@@ -428,7 +428,7 @@ mod apply {
             }
         };
 
-        let result = features_path
+        let _result = features_path
             .view(&data)
             .and_then(|val| val.as_array())
             .map(mapper);
@@ -440,9 +440,9 @@ mod apply {
         let features_path = Path::new().add("features");
         let selector = selector_string(|v| {
             if v == "tree" {
-                Some(StyleFn::circle(String::from("blue"), 12.0))
+                Some(style_fn::circle(String::from("blue"), 12.0))
             } else {
-                Some(StyleFn::square(String::from("red"), 6.0))
+                Some(style_fn::square(String::from("red"), 6.0))
             }
         });
         let prop_path = Path::new().add("properties").add("symbol");

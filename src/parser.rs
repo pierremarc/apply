@@ -1,10 +1,10 @@
-use pom::parser::{any, call, end, list, none_of, one_of, seq, sym, Parser};
+use pom::parser::{call, list, none_of, one_of, seq, sym, Parser};
 use pom::Error as PomError;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
 use std::rc::Rc;
 use std::str::{self, FromStr};
-use std::{cell::RefCell, cmp::max};
 
 use crate::ast::{
     pair, Circle, Command, Constructor, Data, DataType, Directive, Driver, Extent, Fill,
@@ -193,18 +193,16 @@ where
                             position,
                         } => {
                             let context: String =
-                                String::from_utf8(input[max(0, start - 18)..position].into())
-                                    .unwrap();
+                                String::from_utf8(input[start..position].into()).unwrap();
                             format!("err({} -> '{}')", message, context)
                         }
                         PomError::Custom {
                             ref message,
                             position,
-                            ref inner,
+                            ..
                         } => {
                             let context: String =
-                                String::from_utf8(input[max(0, start - 18)..position].into())
-                                    .unwrap();
+                                String::from_utf8(input[start..position].into()).unwrap();
                             format!("err({} -> '{}')", message, context)
                         }
                         _ => format!("err({})", e),
@@ -246,13 +244,169 @@ fn trailing_space<'a>() -> Parser<'a, u8, ()> {
     one_of(b" \t").repeat(0..).discard() - eol()
 }
 
-fn parent<'a, O>(p: Parser<'a, u8, O>) -> Parser<'a, u8, O>
+fn paren<'a, O>(p: Parser<'a, u8, O>) -> Parser<'a, u8, O>
 where
     O: 'a,
 {
-    let left_parent = trace("parent open", sym(b'('));
-    let right_parent = trace("parent close", sym(b')'));
-    left_parent * (spaced(p) - right_parent)
+    let left_paren = trace("parent open", sym(b'('));
+    let right_paren = trace("parent close", sym(b')'));
+    left_paren * (spaced(p) - right_paren)
+}
+
+fn count_consumed<'a, O>(parser: Parser<'a, u8, O>) -> Parser<'a, u8, (O, usize)>
+where
+    O: Clone + 'a,
+{
+    Parser::new(move |input: &'a [u8], start: usize| {
+        let result = (parser.method)(input, start);
+        result.map(|(a, b)| ((a, b), b))
+    })
+}
+
+struct NestedState<Operator, Output>
+where
+    Output: Clone,
+    Operator: Clone,
+{
+    depth: usize,
+    pendings: Vec<(Operator, Output)>,
+    output: Output,
+    // reduce: Box<dyn 'a + Fn(Output, Operator, Output) -> Output>,
+}
+
+impl<Operator, Output> NestedState<Operator, Output>
+where
+    Output: Clone,
+    Operator: Clone,
+{
+    fn pop(&mut self) -> Option<(Operator, Output)> {
+        self.pendings.pop()
+    }
+
+    fn push(&mut self, op: Operator, term: Output) {
+        self.pendings.push((op, term));
+    }
+}
+
+struct Nester<'a, Output, Operator, Reducer, TermFactory, OpFactory>
+where
+    Output: 'a + Clone,
+    Operator: 'a + Clone,
+    TermFactory: 'a + Fn() -> Parser<'a, u8, Output>,
+    OpFactory: 'a + Fn() -> Parser<'a, u8, Operator>,
+    Reducer: 'a + Fn(Output, Operator, Output) -> Output,
+{
+    term: TermFactory,
+    op: OpFactory,
+    reducer: Reducer,
+}
+
+fn nested_expr<'a, Output, Operator, Reducer, TermFactory, OpFactory>(
+    nester: Nester<'a, Output, Operator, Reducer, TermFactory, OpFactory>,
+) -> Parser<'a, u8, Output>
+where
+    Output: 'a + Clone,
+    Operator: 'a + Clone,
+    TermFactory: 'a + Fn() -> Parser<'a, u8, Output>,
+    OpFactory: 'a + Fn() -> Parser<'a, u8, Operator>,
+    Reducer: 'a + Fn(Output, Operator, Output) -> Output,
+{
+    let open = b'(';
+    let close = b')';
+
+    let compress = |c: u8| count_consumed(spaced(sym(c)).repeat(1..)).map(|(v, _n)| v.len());
+
+    let nester_shared = Rc::new(nester);
+    let ns0 = Rc::clone(&nester_shared);
+    let ns1 = Rc::clone(&nester_shared);
+    let ns2 = Rc::clone(&nester_shared);
+    let term = move || (ns0.term)();
+    let op = move || (ns1.op)();
+
+    Parser::new(move |input: &'a [u8], start: usize| {
+        if let Ok(((depth, output), mut new_start)) =
+            (compress(open) + term()).parse_at(input, start)
+        {
+            if depth == 0 {
+                return Err(PomError::Custom {
+                    position: start,
+                    message: String::from("Not A Paren"),
+                    inner: None,
+                });
+            }
+
+            let state: Rc<RefCell<NestedState<Operator, Output>>> =
+                Rc::new(RefCell::new(NestedState {
+                    depth,
+                    output,
+                    pendings: Vec::new(),
+                }));
+
+            let s0 = state.clone();
+            let s1 = state.clone();
+            let s2 = state.clone();
+
+            let sns0 = ns2.clone();
+            let sep_term = (op() + term()).convert(move |(s, right)| {
+                s0.try_borrow_mut().map(|mut state| match state.pop() {
+                    Some((s, pending)) => {
+                        state.push(s.clone(), (sns0.reducer)(pending, s, right));
+                    }
+                    None => {
+                        state.output = (sns0.reducer)(state.output.clone(), s, right);
+                    }
+                })
+            });
+
+            let sep_open = (op() + compress(open) + term()).convert(move |((s, n), t)| {
+                s1.try_borrow_mut().map(|mut state| {
+                    println!("on_open {} {}", state.depth, n);
+                    state.depth += n;
+                    state.pendings.push((s, t));
+                })
+            });
+
+            let sns1 = ns2.clone();
+            let on_close = compress(close).convert(move |n| {
+                s2.try_borrow_mut().map(|mut state| {
+                    println!("on_close {} {}", state.depth, n);
+                    state.depth -= n;
+                    if let Some(pending) = state.pendings.pop() {
+                        state.output = (sns1.reducer)(state.output.clone(), pending.0, pending.1);
+                    };
+                })
+            });
+
+            let meta = sep_term | sep_open | on_close;
+
+            let get_depth = || state.try_borrow().map(|s| s.depth).unwrap_or(0);
+            while get_depth() > 0 {
+                match meta.parse_at(input, new_start) {
+                    Err(err) => {
+                        return Err(err);
+                    }
+                    Ok((_, n)) => {
+                        new_start = n;
+                    }
+                };
+            }
+
+            return match state.try_borrow() {
+                Err(_) => Err(PomError::Custom {
+                    position: start,
+                    message: String::from("Nested State Stuck"),
+                    inner: None,
+                }),
+                Ok(s) => Ok((s.output.clone(), new_start)),
+            };
+        } else {
+            return Err(PomError::Custom {
+                position: start,
+                message: String::from("Not A Paren"),
+                inner: None,
+            });
+        }
+    })
 }
 
 fn spaced<'a, O>(p: Parser<'a, u8, O>) -> Parser<'a, u8, O>
@@ -323,7 +477,7 @@ fn literal<'a>() -> Parser<'a, u8, Literal> {
     (n | b | s).name("literal")
 }
 
-fn srid<'a>(ctx: &SharedContext) -> Parser<'a, u8, Directive> {
+fn srid<'a>(_ctx: &SharedContext) -> Parser<'a, u8, Directive> {
     let kw = seq(KEYWORD_SRID);
     let srid_number = integer().expect("srid wants a srid");
     (kw * (spacing() * srid_number))
@@ -331,7 +485,7 @@ fn srid<'a>(ctx: &SharedContext) -> Parser<'a, u8, Directive> {
         .name("srid")
 }
 
-fn extent<'a>(ctx: &SharedContext) -> Parser<'a, u8, Directive> {
+fn extent<'a>(_ctx: &SharedContext) -> Parser<'a, u8, Directive> {
     let kw = seq(KEYWORD_EXTENT) - spacing();
     let minx = number() - spacing();
     let maxx = number() - spacing();
@@ -370,7 +524,7 @@ fn map<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, MapBlock> {
     // )
 }
 
-fn source<'a>(ctx: &SharedContext) -> Parser<'a, u8, Directive> {
+fn source<'a>(_ctx: &SharedContext) -> Parser<'a, u8, Directive> {
     let source = seq(KEYWORD_SOURCE) - spacing();
     let driver = (seq(SOURCE_DRIVER_GEOJSON).map(|_| Driver::Geojson)
         | seq(SOURCE_DRIVER_POSTGIS).map(|_| Driver::Postgis)
@@ -385,7 +539,7 @@ fn source<'a>(ctx: &SharedContext) -> Parser<'a, u8, Directive> {
     )
 }
 
-fn datatype<'a>(ctx: &SharedContext) -> Parser<'a, u8, DataType> {
+fn datatype<'a>(_ctx: &SharedContext) -> Parser<'a, u8, DataType> {
     seq(DATATYPE_STRING).map(|_| DataType::String)
         | seq(DATATYPE_NUMBER).map(|_| DataType::Number)
         | seq(DATATYPE_BOOLEAN).map(|_| DataType::Boolean)
@@ -418,7 +572,7 @@ fn data<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, Directive> {
 fn function<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, FunctionCall> {
     let sep = opt_spacing() + sym(b',') + opt_spacing();
     let args: Parser<'a, u8, Vec<Value>> = list(call(move || value(ctx)), sep);
-    let f = ident() + parent(args);
+    let f = ident() + paren(args);
 
     f.map(|(name, args)| FunctionCall { name, args })
         .name("function")
@@ -514,12 +668,38 @@ fn predicate_group<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, PredGroup> {
 
 fn any_pred<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, PredGroup> {
     spaced(
-        trace(
-            "parent",
-            parent(call(move || any_pred(ctx)) | predicate_group(ctx) | predicate_single(ctx)),
-        ) | predicate_group(ctx)
+        call(move || {
+            let nester = Nester {
+                op: || {
+                    spaced(seq(KEYWORD_OR) | seq(KEYWORD_AND)).convert(|op| match op {
+                        KEYWORD_AND => Ok(PredOp::And),
+                        KEYWORD_OR => Ok(PredOp::Or),
+                        _ => Err(ParseError::Mysterious),
+                    })
+                },
+                term: move || predicate_single(ctx),
+                reducer: |left: PredGroup, op: PredOp, right: PredGroup| match op {
+                    PredOp::And => PredGroup::And {
+                        left: Box::new(left),
+                        right: Box::new(right),
+                    },
+                    PredOp::Or => PredGroup::Or {
+                        left: Box::new(left),
+                        right: Box::new(right),
+                    },
+                },
+            };
+
+            nested_expr(nester)
+        }) | predicate_group(ctx)
             | predicate_single(ctx),
     )
+}
+
+#[derive(Debug, Clone)]
+enum PredOp {
+    Or,
+    And,
 }
 
 fn predicate<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, PredGroup> {
@@ -662,9 +842,9 @@ const DATATYPE_STRING: &[u8] = b"string";
 const DATATYPE_NUMBER: &[u8] = b"number";
 const DATATYPE_BOOLEAN: &[u8] = b"bool";
 
-const GEOMETRY_POINT: &[u8] = b"point";
-const GEOMETRY_LINE: &[u8] = b"line";
-const GEOMETRY_POLYGON: &[u8] = b"polygon";
+// const GEOMETRY_POINT: &[u8] = b"point";
+// const GEOMETRY_LINE: &[u8] = b"line";
+// const GEOMETRY_POLYGON: &[u8] = b"polygon";
 
 const TRUE: &[u8] = b"true";
 const FALSE: &[u8] = b"false";
@@ -672,7 +852,7 @@ const FALSE: &[u8] = b"false";
 #[cfg(test)]
 mod parser_test {
     use super::*;
-    use crate::ast::*;
+    // use crate::ast::*;
     #[test]
     fn trailing_space_works() {
         let map_str = "aaaaaaaaaaaaaa
@@ -708,7 +888,7 @@ data blue  rgb(0, 0, 255)
     fn parent_works() {
         let map_str = "(truc )";
         let token = b"truc";
-        let parser = parent(seq(token));
+        let parser = paren(seq(token));
         let result = dbg!(parser.parse(map_str.as_bytes()));
 
         assert!(result.is_ok());
@@ -755,6 +935,30 @@ data blue  rgb(0, 0, 255)
                 panic!("\n**ERROR**\n{}\n", err);
             }
         };
+    }
+    #[test]
+    fn parse_nested() {
+        let input = "(a + (b+ c + (d)) + ((e + f)+ g + h   )   )";
+        let nester_right = Nester {
+            op: || spaced(sym(b'+')),
+            term: || ascii_letter(),
+            reducer: |_l: u8, _o: u8, r: u8| r,
+        };
+        let nester_left = Nester {
+            op: || spaced(sym(b'+')),
+            term: || ascii_letter(),
+            reducer: |l: u8, _o: u8, _r: u8| l,
+        };
+
+        assert_eq!(
+            b'h',
+            nested_expr(nester_right).parse(input.as_bytes()).unwrap()
+        );
+
+        assert_eq!(
+            b'a',
+            nested_expr(nester_left).parse(input.as_bytes()).unwrap()
+        );
     }
     #[test]
     fn parse_pred_nested() {
