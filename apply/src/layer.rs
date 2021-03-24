@@ -1,10 +1,8 @@
-use std::collections::HashMap;
-
 use crate::source::geojson_source::GeoJSON;
 use crate::source::Source;
-use parser::ast::{Constructor, Directive, LayerBlock, Literal, Source as SourceSpec};
+use parser::ast::Source as SourceSpec;
 
-use crate::{error::ApplyResult, scope::BaseScope};
+use crate::error::ApplyResult;
 
 pub fn make_source(spec: SourceSpec) -> ApplyResult<impl Source> {
     let driver = spec.driver;
@@ -16,18 +14,18 @@ pub fn make_source(spec: SourceSpec) -> ApplyResult<impl Source> {
     }
 }
 
-pub fn make_scope(spec: LayerBlock, parent: &BaseScope) -> ApplyResult<BaseScope> {
-    let values: HashMap<String, Literal> = spec
-        .directives
-        .iter()
-        .filter_map(|directive| match directive {
-            Directive::Data(data) => match (*data.constructor).clone() {
-                Constructor::Val(val) => parent.resolve(val).map(|l| (data.ident.clone(), l)).ok(),
-                _ => None,
-            },
-            _ => None,
-        })
-        .collect();
+// pub fn make_scope(spec: LayerBlock, parent: &BaseScope) -> ApplyResult<BaseScope> {
+//     let values: HashMap<String, Literal> = spec
+//         .directives
+//         .iter()
+//         .filter_map(|directive| match directive {
+//             Directive::Data(data) => match (*data.constructor).clone() {
+//                 Constructor::Val(val) => parent.resolve(val).map(|l| (data.ident.clone(), l)).ok(),
+//                 _ => None,
+//             },
+//             _ => None,
+//         })
+//         .collect();
 
-    Ok(parent.concat(values))
-}
+//     Ok(parent.concat(values))
+// }

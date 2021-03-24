@@ -1,7 +1,7 @@
 use crate::{
     error::{ApplyError, ApplyResult},
     geom::{from_geojson, Geometry},
-    scope::{BaseScope, FeatureScope},
+    scope::{FeatureScope, Scope},
 };
 use crate::{op::OpList, source::Source};
 use geojson::Feature;
@@ -10,16 +10,16 @@ use parser::ast::{Command, PredGroup, Predicate, Sym};
 pub mod circle;
 pub mod clear;
 
-pub struct SymInput<'a, S> {
-    pub scope: &'a FeatureScope<'a, S>,
+pub struct SymInput<'a> {
+    pub scope: Box<dyn Scope + 'a>,
     // feature geometry
     pub geometry: Geometry,
     // previous operations
     pub ops: OpList,
 }
 
-impl<'a, S> SymInput<'a, S> {
-    pub fn new(scope: &'a FeatureScope<S>, geometry: Geometry, ops: OpList) -> Self {
+impl<'a> SymInput<'a> {
+    pub fn new(scope: Box<dyn Scope + 'a>, geometry: Geometry, ops: OpList) -> Self {
         Self {
             scope,
             geometry,
@@ -43,19 +43,19 @@ impl SymOuput {
     }
 }
 
-pub trait SymCommand<S: Source> {
-    fn exec(&self, input: &SymInput<S>) -> ApplyResult<SymOuput>;
+pub trait SymCommand {
+    fn exec(&self, input: &SymInput) -> ApplyResult<SymOuput>;
 }
 
-pub fn exec_command<S: Source>(
+pub fn exec_command<'a>(
     command: &Command,
-    scope: &FeatureScope<S>,
+    scope: Box<dyn Scope + 'a>,
     feature: &Feature,
     output: SymOuput,
 ) -> ApplyResult<SymOuput> {
     let opt_geom = feature.geometry.as_ref();
     if let Some(geom) = opt_geom.and_then(|r| from_geojson(r.clone())) {
-        let input = SymInput::new(scope.clone(), geom, output.ops);
+        let input = SymInput::new(scope, geom, output.ops);
         match command {
             Command::Clear(c) => c.exec(&input),
             Command::Circle(c) => c.exec(&input),
@@ -66,10 +66,10 @@ pub fn exec_command<S: Source>(
     }
 }
 
-pub fn exec_consequent<S: Source>(
+pub fn exec_consequent<'a>(
     commands: Vec<Command>,
-    scope: &BaseScope,
-    feature: &FeatureScope<S>,
+    scope: Box<dyn Scope + 'a>,
+    feature: &Feature,
 ) -> ApplyResult<SymOuput> {
     let init_output = Ok(SymOuput { ops: Vec::new() });
 
@@ -78,10 +78,7 @@ pub fn exec_consequent<S: Source>(
     })
 }
 
-pub fn eval_predicate<S: Source>(
-    predicate: Predicate,
-    scope: &FeatureScope<S>,
-) -> ApplyResult<bool> {
+pub fn eval_predicate<'a>(predicate: Predicate, scope: Box<dyn Scope + 'a>) -> ApplyResult<bool> {
     match predicate {
         Predicate::Equal((left, right)) => scope
             .resolve(left)
@@ -104,10 +101,7 @@ pub fn eval_predicate<S: Source>(
     }
 }
 
-pub fn eval_predicate_group<S: Source>(
-    group: PredGroup,
-    scope: &FeatureScope<S>,
-) -> ApplyResult<bool> {
+pub fn eval_predicate_group<'a>(group: PredGroup, scope: Box<dyn Scope + 'a>) -> ApplyResult<bool> {
     match group {
         PredGroup::Empty => Ok(false),
         PredGroup::Pred(predicate) => eval_predicate(predicate, scope),
@@ -118,17 +112,16 @@ pub fn eval_predicate_group<S: Source>(
     }
 }
 
-pub fn make_symbology_for_feature<S>(
+pub fn make_symbology_for_feature<'a, S>(
     sym: Sym,
-    scope: &BaseScope,
-    source: &S,
+    source: &'a S,
     feature: &Feature,
 ) -> ApplyResult<OpList>
 where
     S: Source,
 {
     let group = sym.predicate.clone();
-    let scope = FeatureScope::new(scope.clone(), source, feature);
+    let scope = Box::new(FeatureScope::new(source, feature.clone()));
     if eval_predicate_group(group, scope)? {
         let commands = sym.consequent.clone();
         let output = exec_consequent(commands, scope, feature)?;
@@ -138,13 +131,13 @@ where
     }
 }
 
-pub fn make_symbology<S>(sym: Sym, scope: &BaseScope, source: &S) -> ApplyResult<OpList>
+pub fn make_symbology<S>(sym: Sym, source: &S) -> ApplyResult<OpList>
 where
     S: Source,
 {
     let ops = source
         .iter()
-        .filter_map(|f| make_symbology_for_feature(sym.clone(), scope, source, f).ok())
+        .filter_map(|f| make_symbology_for_feature(sym.clone(), source, f).ok())
         .flatten()
         .collect();
     Ok(ops)

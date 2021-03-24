@@ -1,6 +1,7 @@
+use std::rc::Rc;
+
 use geojson::Feature;
 use parser::ast::{Constructor, Literal, Value};
-use std::collections::HashMap;
 
 use crate::{
     error::{ApplyError, ApplyResult},
@@ -8,34 +9,8 @@ use crate::{
     source::Source,
 };
 
-#[derive(Debug, Clone)]
-pub struct BaseScope {
-    known_values: HashMap<String, Literal>,
-}
-
-impl BaseScope {
-    // the passed values shall hold all known vales when entering
-    // the scope
-    pub fn new(values: HashMap<String, Literal>) -> Self {
-        Self {
-            known_values: values,
-        }
-    }
-
-    pub fn concat(&self, values: HashMap<String, Literal>) -> Self {
-        let mut new_map = self.known_values.clone();
-        new_map.extend(values.into_iter());
-        BaseScope::new(new_map)
-    }
-
-    fn get(&self, key: &str) -> ApplyResult<Literal> {
-        self.known_values
-            .get(key)
-            .map(|v| v.clone())
-            .ok_or(ApplyError::Resolve(key.into()))
-    }
-
-    pub fn resolve(&self, value: Value) -> ApplyResult<Literal> {
+pub trait Scope {
+    fn resolve(&self, value: Value) -> ApplyResult<Literal> {
         match value {
             Value::Lit(l) => Ok(l),
             Value::Fn(f) => {
@@ -55,34 +30,52 @@ impl BaseScope {
         }
     }
 }
-pub struct FeatureScope<'a, S>
+
+#[derive(Debug, Clone)]
+pub struct BaseScope;
+
+impl Scope for BaseScope {}
+
+#[derive(Debug, Clone)]
+pub struct FeatureScope<S>
 where
     S: Source,
 {
-    base: BaseScope,
-    source: &'a S,
-    feature: &'a Feature,
+    source: Rc<S>,
+    feature: Feature,
 }
 
-impl<'a, S> FeatureScope<'a, S>
+impl<S> FeatureScope<S>
 where
     S: Source,
 {
-    pub fn new(base: BaseScope, source: &'a S, feature: &'a Feature) -> Self {
+    pub fn new<'a>(source: &S, feature: Feature) -> Self {
         Self {
-            base,
-            source,
+            source: Rc::new(*source),
             feature,
         }
     }
+}
 
-    pub fn resolve(&self, value: Value) -> ApplyResult<Literal> {
+impl<S> Scope for FeatureScope<S>
+where
+    S: Source,
+{
+    fn resolve(&self, value: Value) -> ApplyResult<Literal> {
         match value {
+            Value::Lit(l) => Ok(l),
+            Value::Fn(f) => {
+                let func = find_function(&f.name)?;
+                let mut args: Vec<Literal> = Vec::new();
+                for arg in f.args.iter() {
+                    args.push(self.resolve(arg.clone())?);
+                }
+                func.call(args)
+            }
             Value::Data(data) => match *data.constructor {
-                Constructor::Select(select) => self.source.select(select, self.feature),
                 Constructor::Val(inner) => self.resolve(inner),
+                Constructor::Select(select) => self.source.select(select, &self.feature),
             },
-            _ => self.base.resolve(value),
         }
     }
 }
