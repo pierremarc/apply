@@ -1,9 +1,12 @@
 use angle::{Angle, Deg};
-use geo::{Geometry, Point};
 use serde_json::value::Value;
 
-pub mod ast;
-pub mod parser;
+pub mod error;
+pub mod function;
+pub mod geom;
+pub mod op;
+pub mod scope;
+pub mod sym;
 
 #[derive(Clone)]
 pub enum PathIndex {
@@ -167,64 +170,9 @@ where
     SelectorString(Box::new(f))
 }
 
-#[derive(Debug)]
-pub enum Op {
-    Text {
-        text: String,
-        font: String,
-        color: String,
-        size: f64,
-        x: f64,
-        y: f64,
-    },
-    Fill(String),
-    Stroke {
-        color: String,
-        size: f64,
-    },
-    Move(Point<f64>),
-    Line(Point<f64>),
-    Close,
-}
-
 pub enum Shape {
     Square,
     Circle,
-}
-
-pub fn point(x: f64, y: f64) -> Point<f64> {
-    Point::new(x, y)
-}
-
-pub fn move_to(x: f64, y: f64) -> Op {
-    Op::Move(point(x, y))
-}
-
-pub fn line_to(x: f64, y: f64) -> Op {
-    Op::Line(point(x, y))
-}
-
-pub fn close() -> Op {
-    Op::Close
-}
-
-pub fn fill(color: String) -> Op {
-    Op::Fill(color)
-}
-
-pub fn stroke(color: String, size: f64) -> Op {
-    Op::Stroke { color, size }
-}
-
-pub fn text(text: String, font: String, color: String, size: f64, x: f64, y: f64) -> Op {
-    Op::Text {
-        text,
-        font,
-        color,
-        size,
-        x,
-        y,
-    }
 }
 
 impl Shape {

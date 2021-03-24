@@ -1,0 +1,9 @@
+[package]
+name = "parser"
+version = "0.1.0"
+authors = ["Pierre Marchand <pierre-m@atelier-cartographique.be>"]
+edition = "2018"
+
+
+[dependencies]
+pom = "3.2.0"

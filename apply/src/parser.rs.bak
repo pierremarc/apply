@@ -1,10 +1,10 @@
-use pom::parser::{call, list, none_of, one_of, seq, sym, Parser};
+use pom::parser::{any, call, end, list, none_of, one_of, seq, sym, Parser};
 use pom::Error as PomError;
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
 use std::rc::Rc;
 use std::str::{self, FromStr};
+use std::{cell::RefCell, cmp::max};
 
 use crate::ast::{
     pair, Circle, Command, Constructor, Data, DataType, Directive, Driver, Extent, Fill,
@@ -193,16 +193,18 @@ where
                             position,
                         } => {
                             let context: String =
-                                String::from_utf8(input[start..position].into()).unwrap();
+                                String::from_utf8(input[max(0, start - 18)..position].into())
+                                    .unwrap();
                             format!("err({} -> '{}')", message, context)
                         }
                         PomError::Custom {
                             ref message,
                             position,
-                            ..
+                            ref inner,
                         } => {
                             let context: String =
-                                String::from_utf8(input[start..position].into()).unwrap();
+                                String::from_utf8(input[max(0, start - 18)..position].into())
+                                    .unwrap();
                             format!("err({} -> '{}')", message, context)
                         }
                         _ => format!("err({})", e),
@@ -253,6 +255,93 @@ where
     left_paren * (spaced(p) - right_paren)
 }
 
+#[derive(Debug, Clone)]
+enum Par<O, S>
+where
+    O: Clone,
+    S: Clone,
+{
+    None,
+    Open {
+        depth: usize,
+        index: usize,
+        value: Option<(O, S)>,
+    },
+    Close {
+        depth: usize,
+        index: usize,
+        value: Option<(O, S)>,
+    },
+}
+
+struct ParList<O: Clone, S: Clone>(Vec<Par<O, S>>, bool, bool);
+
+impl<O, S> ParList<O, S>
+where
+    O: Clone,
+    S: Clone,
+{
+    fn new() -> Self {
+        ParList(vec![Par::None], true, false)
+    }
+
+    fn abort(&mut self) -> &mut Self {
+        self.1 = false;
+        self
+    }
+
+    fn close(&mut self) -> &mut Self {
+        self.2 = true;
+        self
+    }
+
+    fn is_valid(&self) -> bool {
+        self.1
+    }
+
+    fn is_open(&self) -> bool {
+        self.2
+    }
+
+    // fn find_opening(&self, at_depth: usize) -> Option<Par> {
+    //     self.0
+    //         .iter()
+    //         .rev()
+    //         .find(|p| match p {
+    //             Par::Open { depth, .. } => at_depth == *depth,
+    //             _ => false,
+    //         })
+    //         .map(|p| p.clone())
+    // }
+
+    // fn find_closing(&self, at_depth: usize) -> Option<Par> {
+    //     self.0
+    //         .iter()
+    //         .rev()
+    //         .find(|p| match p {
+    //             Par::Close { depth, .. } => at_depth == *depth,
+    //             _ => false,
+    //         })
+    //         .map(|p| p.clone())
+    // }
+
+    fn push(&mut self, p: Par<O, S>) {
+        if self.is_open() {
+            self.0.push(p);
+        }
+    }
+
+    fn last(&self) -> Par<O, S> {
+        self.0.last().unwrap().clone()
+    }
+}
+
+enum Next<S, T> {
+    Close(usize),
+    Open(S),
+    Term(T),
+}
+
 fn count_consumed<'a, O>(parser: Parser<'a, u8, O>) -> Parser<'a, u8, (O, usize)>
 where
     O: Clone + 'a,
@@ -263,150 +352,147 @@ where
     })
 }
 
-struct NestedState<Operator, Output>
+fn nested_expr<'a, O, S, R>(
+    name: &'a str,
+    term: Parser<'a, u8, O>,
+    op: Parser<'a, u8, S>,
+    reducer: R,
+) -> Parser<'a, u8, O>
 where
-    Output: Clone,
-    Operator: Clone,
-{
-    depth: usize,
-    pendings: Vec<(Operator, Output)>,
-    output: Output,
-    // reduce: Box<dyn 'a + Fn(Output, Operator, Output) -> Output>,
-}
-
-impl<Operator, Output> NestedState<Operator, Output>
-where
-    Output: Clone,
-    Operator: Clone,
-{
-    fn pop(&mut self) -> Option<(Operator, Output)> {
-        self.pendings.pop()
-    }
-
-    fn push(&mut self, op: Operator, term: Output) {
-        self.pendings.push((op, term));
-    }
-}
-
-struct Nester<'a, Output, Operator, Reducer, TermFactory, OpFactory>
-where
-    Output: 'a + Clone,
-    Operator: 'a + Clone,
-    TermFactory: 'a + Fn() -> Parser<'a, u8, Output>,
-    OpFactory: 'a + Fn() -> Parser<'a, u8, Operator>,
-    Reducer: 'a + Fn(Output, Operator, Output) -> Output,
-{
-    term: TermFactory,
-    op: OpFactory,
-    reducer: Reducer,
-}
-
-fn nested_expr<'a, Output, Operator, Reducer, TermFactory, OpFactory>(
-    nester: Nester<'a, Output, Operator, Reducer, TermFactory, OpFactory>,
-) -> Parser<'a, u8, Output>
-where
-    Output: 'a + Clone,
-    Operator: 'a + Clone,
-    TermFactory: 'a + Fn() -> Parser<'a, u8, Output>,
-    OpFactory: 'a + Fn() -> Parser<'a, u8, Operator>,
-    Reducer: 'a + Fn(Output, Operator, Output) -> Output,
+    O: 'a + Clone,
+    R: Fn(O, S, O) -> O,
 {
     let open = b'(';
     let close = b')';
 
-    let compress = |c: u8| count_consumed(spaced(sym(c)).repeat(1..)).map(|(v, _n)| v.len());
+    let compress = |c: u8| count_consumed(spaced(sym(c)).repeat(1..)).map(|(_, n)| n);
 
-    let nester_shared = Rc::new(nester);
-    let ns0 = Rc::clone(&nester_shared);
-    let ns1 = Rc::clone(&nester_shared);
-    let ns2 = Rc::clone(&nester_shared);
-    let term = move || (ns0.term)();
-    let op = move || (ns1.op)();
+    let new_parser: Parser<'a, u8, O> = Parser::new(
+        move |input: &'a [u8], start: usize| {
+            if let Ok(((mut depth, mut output), mut new_start)) =
+                (compress(open) + term).parse_at(input, start)
+            {
+                if depth == 0 {
+                    return Err(PomError::Custom {
+                        position: start,
+                        message: String::from("Not A Paren"),
+                        inner: None,
+                    });
+                }
+                let mut pendings: Vec<(S, O)> = vec![];
 
-    Parser::new(move |input: &'a [u8], start: usize| {
-        if let Ok(((depth, output), mut new_start)) =
-            (compress(open) + term()).parse_at(input, start)
-        {
-            if depth == 0 {
+                let sep_term = (op + term).map(|(s, right)| {
+                    if let Some(&mut pending) = pendings.last_mut() {
+                        pending.1 = reducer(pending.1, s, right);
+                    } else {
+                        output = reducer(output, s, right)
+                    }
+                });
+
+                let sep_open = (op + compress(open) + term).map(|((s, n), t)| {
+                    depth += n;
+                    pendings.push((s, t));
+                });
+
+                let on_close = compress(close).map(|n| {
+                    depth -= n;
+                    if let Some(&mut pending) = pendings.last_mut() {
+                        output = reducer(output, pending.0, pending.1);
+                    }
+                });
+
+                let meta = sep_term | sep_open | on_close;
+
+                while depth > 0 {
+                    match meta.parse_at(input, new_start) {
+                        err @ Err(_) => return err,
+                        Ok((_, n)) => new_start = n,
+                    }
+                }
+
+                return Ok((output, new_start));
+
+            // while depth > 0 {
+            //     let next = compress(close).map(|n| Next::Close(depth + n))
+            //         | (sep + compress(open)).map(|(s, n)| {
+            //             depth += n;
+            //             Next::Open(s)
+            //         })
+            //         | (sep + term).map(||) ;
+            // }
+            } else {
                 return Err(PomError::Custom {
                     position: start,
                     message: String::from("Not A Paren"),
                     inner: None,
                 });
             }
+        }, //     for (cur_index, val) in input.iter().enumerate() {
+           //         if *val == open {
+           //             match par_list.last() {
+           //                 Par::None => par_list.push(Par::Open {
+           //                     depth: 1,
+           //                     index: cur_index,
+           //                     value: None,
+           //                 }),
+           //                 Par::Open { depth, value, .. } => par_list.push(Par::Open {
+           //                     depth: depth + 1,
+           //                     index: cur_index,
+           //                     value,
+           //                 }),
+           //                 Par::Close { depth, value, .. } => par_list.push(Par::Open {
+           //                     depth: depth - 1,
+           //                     index: cur_index,
+           //                     value,
+           //                 }),
+           //             }
+           //         } else if *val == close {
+           //             match par_list.last() {
+           //                 Par::None => par_list.abort(),
+           //                 Par::Open {
+           //                     depth,
+           //                     index,
+           //                     value,
+           //                 } => {
+           //                     let start = index + 1;
+           //                     let end = cur_index;
+           //                     let new_value = if let Some(left) = value {
+           //                         term.parse(&input[start..end])
+           //                             .ok()
+           //                             .map(|right| reducer(left, right))
+           //                     } else {
+           //                         term.parse(&input[start..end]).ok()
+           //                     };
+           //                     par_list.push(Par::Close {
+           //                         depth,
+           //                         index: cur_index,
+           //                         value: new_value,
+           //                     })
+           //                 }
+           //                 Par::Close {
+           //                     depth,
+           //                     index,
+           //                     value,
+           //                 } => {
+           //                     let start = index + 1;
+           //                     let end = cur_index;
+           //                     let new_value = value.and_then(|left| {
+           //                         term.parse(&input[start..end])
+           //                             .ok()
+           //                             .map(|right| reducer(left, right))
+           //                     });
+           //                     par_list.push(Par::Close {
+           //                         depth: depth - 1,
+           //                         index: cur_index,
+           //                         value: new_value,
+           //                     })
+           //                 }
+           //             }
+           //         }
+           // }
+    );
 
-            let state: Rc<RefCell<NestedState<Operator, Output>>> =
-                Rc::new(RefCell::new(NestedState {
-                    depth,
-                    output,
-                    pendings: Vec::new(),
-                }));
-
-            let s0 = state.clone();
-            let s1 = state.clone();
-            let s2 = state.clone();
-
-            let sns0 = ns2.clone();
-            let sep_term = (op() + term()).convert(move |(s, right)| {
-                s0.try_borrow_mut().map(|mut state| match state.pop() {
-                    Some((s, pending)) => {
-                        state.push(s.clone(), (sns0.reducer)(pending, s, right));
-                    }
-                    None => {
-                        state.output = (sns0.reducer)(state.output.clone(), s, right);
-                    }
-                })
-            });
-
-            let sep_open = (op() + compress(open) + term()).convert(move |((s, n), t)| {
-                s1.try_borrow_mut().map(|mut state| {
-                    println!("on_open {} {}", state.depth, n);
-                    state.depth += n;
-                    state.pendings.push((s, t));
-                })
-            });
-
-            let sns1 = ns2.clone();
-            let on_close = compress(close).convert(move |n| {
-                s2.try_borrow_mut().map(|mut state| {
-                    println!("on_close {} {}", state.depth, n);
-                    state.depth -= n;
-                    if let Some(pending) = state.pendings.pop() {
-                        state.output = (sns1.reducer)(state.output.clone(), pending.0, pending.1);
-                    };
-                })
-            });
-
-            let meta = sep_term | sep_open | on_close;
-
-            let get_depth = || state.try_borrow().map(|s| s.depth).unwrap_or(0);
-            while get_depth() > 0 {
-                match meta.parse_at(input, new_start) {
-                    Err(err) => {
-                        return Err(err);
-                    }
-                    Ok((_, n)) => {
-                        new_start = n;
-                    }
-                };
-            }
-
-            return match state.try_borrow() {
-                Err(_) => Err(PomError::Custom {
-                    position: start,
-                    message: String::from("Nested State Stuck"),
-                    inner: None,
-                }),
-                Ok(s) => Ok((s.output.clone(), new_start)),
-            };
-        } else {
-            return Err(PomError::Custom {
-                position: start,
-                message: String::from("Not A Paren"),
-                inner: None,
-            });
-        }
-    })
+    new_parser
 }
 
 fn spaced<'a, O>(p: Parser<'a, u8, O>) -> Parser<'a, u8, O>
@@ -477,7 +563,7 @@ fn literal<'a>() -> Parser<'a, u8, Literal> {
     (n | b | s).name("literal")
 }
 
-fn srid<'a>(_ctx: &SharedContext) -> Parser<'a, u8, Directive> {
+fn srid<'a>(ctx: &SharedContext) -> Parser<'a, u8, Directive> {
     let kw = seq(KEYWORD_SRID);
     let srid_number = integer().expect("srid wants a srid");
     (kw * (spacing() * srid_number))
@@ -485,7 +571,7 @@ fn srid<'a>(_ctx: &SharedContext) -> Parser<'a, u8, Directive> {
         .name("srid")
 }
 
-fn extent<'a>(_ctx: &SharedContext) -> Parser<'a, u8, Directive> {
+fn extent<'a>(ctx: &SharedContext) -> Parser<'a, u8, Directive> {
     let kw = seq(KEYWORD_EXTENT) - spacing();
     let minx = number() - spacing();
     let maxx = number() - spacing();
@@ -524,7 +610,7 @@ fn map<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, MapBlock> {
     // )
 }
 
-fn source<'a>(_ctx: &SharedContext) -> Parser<'a, u8, Directive> {
+fn source<'a>(ctx: &SharedContext) -> Parser<'a, u8, Directive> {
     let source = seq(KEYWORD_SOURCE) - spacing();
     let driver = (seq(SOURCE_DRIVER_GEOJSON).map(|_| Driver::Geojson)
         | seq(SOURCE_DRIVER_POSTGIS).map(|_| Driver::Postgis)
@@ -539,7 +625,7 @@ fn source<'a>(_ctx: &SharedContext) -> Parser<'a, u8, Directive> {
     )
 }
 
-fn datatype<'a>(_ctx: &SharedContext) -> Parser<'a, u8, DataType> {
+fn datatype<'a>(ctx: &SharedContext) -> Parser<'a, u8, DataType> {
     seq(DATATYPE_STRING).map(|_| DataType::String)
         | seq(DATATYPE_NUMBER).map(|_| DataType::Number)
         | seq(DATATYPE_BOOLEAN).map(|_| DataType::Boolean)
@@ -668,38 +754,12 @@ fn predicate_group<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, PredGroup> {
 
 fn any_pred<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, PredGroup> {
     spaced(
-        call(move || {
-            let nester = Nester {
-                op: || {
-                    spaced(seq(KEYWORD_OR) | seq(KEYWORD_AND)).convert(|op| match op {
-                        KEYWORD_AND => Ok(PredOp::And),
-                        KEYWORD_OR => Ok(PredOp::Or),
-                        _ => Err(ParseError::Mysterious),
-                    })
-                },
-                term: move || predicate_single(ctx),
-                reducer: |left: PredGroup, op: PredOp, right: PredGroup| match op {
-                    PredOp::And => PredGroup::And {
-                        left: Box::new(left),
-                        right: Box::new(right),
-                    },
-                    PredOp::Or => PredGroup::Or {
-                        left: Box::new(left),
-                        right: Box::new(right),
-                    },
-                },
-            };
-
-            nested_expr(nester)
-        }) | predicate_group(ctx)
+        trace(
+            "parent",
+            paren(call(move || any_pred(ctx)) | predicate_group(ctx) | predicate_single(ctx)),
+        ) | predicate_group(ctx)
             | predicate_single(ctx),
     )
-}
-
-#[derive(Debug, Clone)]
-enum PredOp {
-    Or,
-    And,
 }
 
 fn predicate<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, PredGroup> {
@@ -842,9 +902,9 @@ const DATATYPE_STRING: &[u8] = b"string";
 const DATATYPE_NUMBER: &[u8] = b"number";
 const DATATYPE_BOOLEAN: &[u8] = b"bool";
 
-// const GEOMETRY_POINT: &[u8] = b"point";
-// const GEOMETRY_LINE: &[u8] = b"line";
-// const GEOMETRY_POLYGON: &[u8] = b"polygon";
+const GEOMETRY_POINT: &[u8] = b"point";
+const GEOMETRY_LINE: &[u8] = b"line";
+const GEOMETRY_POLYGON: &[u8] = b"polygon";
 
 const TRUE: &[u8] = b"true";
 const FALSE: &[u8] = b"false";
@@ -852,7 +912,7 @@ const FALSE: &[u8] = b"false";
 #[cfg(test)]
 mod parser_test {
     use super::*;
-    // use crate::ast::*;
+    use crate::ast::*;
     #[test]
     fn trailing_space_works() {
         let map_str = "aaaaaaaaaaaaaa
@@ -935,30 +995,6 @@ data blue  rgb(0, 0, 255)
                 panic!("\n**ERROR**\n{}\n", err);
             }
         };
-    }
-    #[test]
-    fn parse_nested() {
-        let input = "(a + (b+ c + (d)) + ((e + f)+ g + h   )   )";
-        let nester_right = Nester {
-            op: || spaced(sym(b'+')),
-            term: || ascii_letter(),
-            reducer: |_l: u8, _o: u8, r: u8| r,
-        };
-        let nester_left = Nester {
-            op: || spaced(sym(b'+')),
-            term: || ascii_letter(),
-            reducer: |l: u8, _o: u8, _r: u8| l,
-        };
-
-        assert_eq!(
-            b'h',
-            nested_expr(nester_right).parse(input.as_bytes()).unwrap()
-        );
-
-        assert_eq!(
-            b'a',
-            nested_expr(nester_left).parse(input.as_bytes()).unwrap()
-        );
     }
     #[test]
     fn parse_pred_nested() {

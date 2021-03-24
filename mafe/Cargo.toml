@@ -1,0 +1,10 @@
+[package]
+name = "mafe"
+version = "0.1.0"
+authors = ["Pierre Marchand <pierre-m@atelier-cartographique.be>"]
+edition = "2018"
+
+
+[dependencies]
+apply = { path = "../apply" }
+parser = { path = "../parser" }
