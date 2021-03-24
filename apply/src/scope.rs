@@ -1,7 +1,10 @@
 use parser::ast::{Literal, Value};
 use std::collections::HashMap;
 
-use crate::{error::ApplyResult, function::find_function};
+use crate::{
+    error::{ApplyError, ApplyResult},
+    function::find_function,
+};
 
 pub struct ApplyScope {
     known_values: HashMap<String, Literal>,
@@ -14,8 +17,11 @@ impl ApplyScope {
         }
     }
 
-    pub fn get(&self, key: &str) -> Option<Literal> {
-        self.known_values.get(key).map(|v| v.clone())
+    fn get(&self, key: &str) -> ApplyResult<Literal> {
+        self.known_values
+            .get(key)
+            .map(|v| v.clone())
+            .ok_or(ApplyError::Resolve(key.into()))
     }
 
     pub fn resolve(&self, value: Value) -> ApplyResult<Literal> {
@@ -29,7 +35,7 @@ impl ApplyScope {
                 }
                 func.call(args)
             }
-            Value::Data(d) => todo!(),
+            Value::Data(d) => self.get(&d.ident),
         }
     }
 }
