@@ -11,6 +11,8 @@ pub struct ApplyScope {
 }
 
 impl ApplyScope {
+    // the passed values shall hold all known vales when entering
+    // the scope, esp. those extracted from a source feature
     pub fn new(values: HashMap<String, Literal>) -> Self {
         Self {
             known_values: values,
