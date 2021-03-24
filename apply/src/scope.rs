@@ -1,22 +1,31 @@
-use parser::ast::{Literal, Value};
+use geojson::Feature;
+use parser::ast::{Constructor, Literal, Value};
 use std::collections::HashMap;
 
 use crate::{
     error::{ApplyError, ApplyResult},
     function::find_function,
+    source::Source,
 };
 
-pub struct ApplyScope {
+#[derive(Debug, Clone)]
+pub struct BaseScope {
     known_values: HashMap<String, Literal>,
 }
 
-impl ApplyScope {
+impl BaseScope {
     // the passed values shall hold all known vales when entering
-    // the scope, esp. those extracted from a source feature
+    // the scope
     pub fn new(values: HashMap<String, Literal>) -> Self {
         Self {
             known_values: values,
         }
+    }
+
+    pub fn concat(&self, values: HashMap<String, Literal>) -> Self {
+        let mut new_map = self.known_values.clone();
+        new_map.extend(values.into_iter());
+        BaseScope::new(new_map)
     }
 
     fn get(&self, key: &str) -> ApplyResult<Literal> {
@@ -37,7 +46,43 @@ impl ApplyScope {
                 }
                 func.call(args)
             }
-            Value::Data(d) => self.get(&d.ident),
+            Value::Data(data) => match *data.constructor {
+                Constructor::Val(inner) => self.resolve(inner),
+                Constructor::Select(_) => Err(ApplyError::Resolve(
+                    "At this point we can't resolve a select".into(),
+                )),
+            },
+        }
+    }
+}
+pub struct FeatureScope<'a, S>
+where
+    S: Source,
+{
+    base: BaseScope,
+    source: &'a S,
+    feature: &'a Feature,
+}
+
+impl<'a, S> FeatureScope<'a, S>
+where
+    S: Source,
+{
+    pub fn new(base: BaseScope, source: &'a S, feature: &'a Feature) -> Self {
+        Self {
+            base,
+            source,
+            feature,
+        }
+    }
+
+    pub fn resolve(&self, value: Value) -> ApplyResult<Literal> {
+        match value {
+            Value::Data(data) => match *data.constructor {
+                Constructor::Select(select) => self.source.select(select, self.feature),
+                Constructor::Val(inner) => self.resolve(inner),
+            },
+            _ => self.base.resolve(value),
         }
     }
 }

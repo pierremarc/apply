@@ -1,15 +1,38 @@
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum Num {
     Integer(i64),
     Float(f64),
 }
 
-#[derive(Debug, Clone)]
+// impl PartialEq for Num {
+//     fn eq(&self, other: &Self) -> bool {
+//         match (self, other) {
+//             (Num::Float(a), Num::Float(b)) => a == b,
+//             (Num::Integer(a), Num::Integer(b)) => a == b,
+//             _ => false,
+//         }
+//     }
+// }
+
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum Literal {
+    Nil,
     Number(Num),
     String(String),
     Boolean(bool),
 }
+
+// impl PartialEq for Literal {
+//     fn eq(&self, other: &Self) -> bool {
+//         match (self, other) {
+//             (Literal::Nil, Literal::Nil) => true,
+//             (Literal::String(a), Literal::String(b)) => a == b,
+//             (Literal::Boolean(a), Literal::Boolean(b)) => a == b,
+//             (Literal::Number(a), Literal::Number(b)) => a == b,
+//             _ => false,
+//         }
+//     }
+// }
 
 #[derive(Debug, Clone)]
 pub enum BlockKeyword {
@@ -26,111 +49,9 @@ pub enum ExprKeyword {
 }
 
 #[derive(Debug, Clone)]
-pub enum SymKeyword {
-    Fill,
-    Stroke,
-    Pattern,
-    Label,
-}
-
-#[derive(Debug, Clone)]
-pub enum Keyword {
-    Block(BlockKeyword),
-    Expr(ExprKeyword),
-    Sym(SymKeyword),
-}
-
-#[derive(Debug, Clone)]
-pub enum Operator {
-    Eq,
-    Lt,
-    Lte,
-    Gt,
-    Gte,
-}
-
-#[derive(Debug, Clone)]
-pub enum Symbol {
-    Or,
-    Then,
-    Pipe,
-    Ident(String),
-}
-
-#[derive(Debug, Clone)]
 pub struct FunctionCall {
     pub name: String,
     pub args: ValueList,
-}
-
-#[derive(Debug, Clone)]
-pub enum Node {
-    Lit(Literal),
-    Key(Keyword),
-    Op(Operator),
-    Sym(Symbol),
-    Fn(FunctionCall),
-    Comment(String),
-}
-
-impl From<Num> for Node {
-    fn from(arg: Num) -> Self {
-        Node::Lit(Literal::Number(arg))
-    }
-}
-
-impl From<i64> for Node {
-    fn from(arg: i64) -> Self {
-        Node::Lit(Literal::Number(Num::Integer(arg)))
-    }
-}
-
-impl From<f64> for Node {
-    fn from(arg: f64) -> Self {
-        Node::Lit(Literal::Number(Num::Float(arg)))
-    }
-}
-
-impl From<String> for Node {
-    fn from(arg: String) -> Self {
-        Node::Lit(Literal::String(arg))
-    }
-}
-
-impl From<bool> for Node {
-    fn from(arg: bool) -> Self {
-        Node::Lit(Literal::Boolean(arg))
-    }
-}
-
-impl From<BlockKeyword> for Node {
-    fn from(arg: BlockKeyword) -> Self {
-        Node::Key(Keyword::Block(arg))
-    }
-}
-
-impl From<ExprKeyword> for Node {
-    fn from(arg: ExprKeyword) -> Self {
-        Node::Key(Keyword::Expr(arg))
-    }
-}
-
-impl From<SymKeyword> for Node {
-    fn from(arg: SymKeyword) -> Self {
-        Node::Key(Keyword::Sym(arg))
-    }
-}
-
-impl From<Operator> for Node {
-    fn from(arg: Operator) -> Self {
-        Node::Op(arg)
-    }
-}
-
-impl From<Symbol> for Node {
-    fn from(arg: Symbol) -> Self {
-        Node::Sym(arg)
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -154,11 +75,14 @@ pub enum DataType {
 }
 
 #[derive(Debug, Clone)]
+pub struct Select {
+    pub selector: String,
+    pub datatype: DataType,
+}
+
+#[derive(Debug, Clone)]
 pub enum Constructor {
-    Select {
-        selector: String,
-        datatype: DataType,
-    },
+    Select(Select),
     Val(Value),
 }
 
@@ -175,11 +99,10 @@ pub enum Value {
     Fn(FunctionCall),
 }
 
-#[derive(Debug, Clone)]
-pub struct ValuePair(Value, Value);
+pub type ValuePair = (Value, Value);
 
 pub fn pair(left: Value, right: Value) -> ValuePair {
-    ValuePair(left, right)
+    (left, right)
 }
 
 pub type ValueList = Vec<Value>;
@@ -237,9 +160,16 @@ pub struct Pattern {
 pub struct Label {
     pub content: Value,
 }
+#[derive(Debug, Clone)]
+pub struct Clear;
+
+#[derive(Debug, Clone)]
+pub struct DrawGeometry;
 
 #[derive(Debug, Clone)]
 pub enum Command {
+    Clear(Clear),
+    DrawGeometry(DrawGeometry),
     Circle(Circle),
     Square(Square),
     Fill(Fill),
@@ -305,34 +235,6 @@ impl From<Source> for Directive {
     fn from(arg: Source) -> Self {
         Directive::Source(arg)
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct Expression {
-    pub nodes: Vec<Node>,
-}
-
-impl Expression {
-    pub fn new(nodes: Vec<Node>) -> Self {
-        Expression { nodes }
-    }
-
-    pub fn empty() -> Self {
-        Expression { nodes: Vec::new() }
-    }
-
-    pub fn add<N>(&self, n: N) -> Self
-    where
-        N: Into<Node>,
-    {
-        let mut nodes = self.nodes.clone();
-        nodes.push(n.into());
-        Expression { nodes }
-    }
-}
-
-pub fn expr() -> Expression {
-    Expression::empty()
 }
 
 #[derive(Debug, Clone)]

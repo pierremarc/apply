@@ -1,3 +1,4 @@
+use ast::{Clear, DrawGeometry, Select};
 use pom::parser::{call, list, none_of, one_of, seq, sym, Parser};
 use pom::Error as PomError;
 use std::cell::RefCell;
@@ -14,6 +15,41 @@ use crate::ast::{
     Predicate, Source, Square, Srid, Stroke, Sym, Value,
 };
 
+const KEYWORD_MAP: &[u8] = b"map";
+const KEYWORD_LAYER: &[u8] = b"layer";
+const KEYWORD_SOURCE: &[u8] = b"source";
+const KEYWORD_SRID: &[u8] = b"srid";
+const KEYWORD_EXTENT: &[u8] = b"extent";
+const KEYWORD_DATA: &[u8] = b"data";
+const KEYWORD_SYM: &[u8] = b"sym";
+const KEYWORD_SELECT: &[u8] = b"select";
+const KEYWORD_COMMAND: &[u8] = b"->";
+const KEYWORD_OR: &[u8] = b"|";
+const KEYWORD_AND: &[u8] = b"&";
+
+const COMMAND_DRAW_GEOM: &[u8] = b"draw";
+const COMMAND_CLEAR: &[u8] = b"clear";
+const COMMAND_CIRCLE: &[u8] = b"circle";
+const COMMAND_SQUARE: &[u8] = b"square";
+const COMMAND_FILL: &[u8] = b"fill";
+const COMMAND_STROKE: &[u8] = b"stroke";
+const COMMAND_PATTERN: &[u8] = b"pattern";
+const COMMAND_LABEL: &[u8] = b"label";
+
+const SOURCE_DRIVER_GEOJSON: &[u8] = b"geojson";
+const SOURCE_DRIVER_POSTGIS: &[u8] = b"postgis";
+const SOURCE_DRIVER_SHAPEFILE: &[u8] = b"shapefile";
+
+const DATATYPE_STRING: &[u8] = b"string";
+const DATATYPE_NUMBER: &[u8] = b"number";
+const DATATYPE_BOOLEAN: &[u8] = b"bool";
+
+const PRED_OP_NOTEQ: &[u8] = b"!=";
+const PRED_OP_LTE: &[u8] = b"<=";
+const PRED_OP_GTE: &[u8] = b">=";
+const PRED_OP_EQ: &[u8] = b"=";
+const PRED_OP_GT: &[u8] = b">";
+const PRED_OP_LT: &[u8] = b"<";
 #[derive(Debug, Clone)]
 pub enum ParseError {
     Mysterious,
@@ -550,7 +586,7 @@ fn datatype<'a>(_ctx: &SharedContext) -> Parser<'a, u8, DataType> {
 
 fn constructor<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, Constructor> {
     let sel = ((seq(KEYWORD_SELECT) - spacing()) * (string() + (spacing() * datatype(ctx))))
-        .map(|(selector, datatype)| Constructor::Select { selector, datatype });
+        .map(|(selector, datatype)| Constructor::Select(Select { selector, datatype }));
     let val = value(ctx).map(|v| Constructor::Val(v));
     trace("constructor", sel | val)
 }
@@ -601,13 +637,6 @@ fn value<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, Value> {
         move || inc_depth(&ctx.clone()),
     )
 }
-
-const PRED_OP_NOTEQ: &[u8] = b"!=";
-const PRED_OP_LTE: &[u8] = b"<=";
-const PRED_OP_GTE: &[u8] = b">=";
-const PRED_OP_EQ: &[u8] = b"=";
-const PRED_OP_GT: &[u8] = b">";
-const PRED_OP_LT: &[u8] = b"<";
 
 fn predicate_single<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, PredGroup> {
     let op = trace(
@@ -732,6 +761,16 @@ fn predicate<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, PredGroup> {
     })
 }
 
+fn clear<'a>(_ctx: &'a SharedContext) -> Parser<'a, u8, Command> {
+    let kw = seq(COMMAND_CLEAR);
+    kw.map(|_| Command::Clear(Clear))
+}
+
+fn draw_geometry<'a>(_ctx: &'a SharedContext) -> Parser<'a, u8, Command> {
+    let kw = seq(COMMAND_DRAW_GEOM);
+    kw.map(|_| Command::DrawGeometry(DrawGeometry))
+}
+
 fn circle<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, Command> {
     let kw = seq(COMMAND_CIRCLE) - spacing();
     (kw * value(ctx)).map(|radius| Command::Circle(Circle { radius }))
@@ -761,7 +800,14 @@ fn label<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, Command> {
 fn command<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, Command> {
     trace(
         "command",
-        circle(ctx) | square(ctx) | fill(ctx) | stroke(ctx) | pattern(ctx) | label(ctx),
+        clear(ctx)
+            | draw_geometry(ctx)
+            | circle(ctx)
+            | square(ctx)
+            | fill(ctx)
+            | stroke(ctx)
+            | pattern(ctx)
+            | label(ctx),
     )
 }
 
@@ -817,37 +863,6 @@ pub fn parse<'a>(map_str: &'a str, ctx: &SharedContext) -> Result<MapSpec, Parse
         .parse(map_str.as_bytes())
         .map_err(|e| ParseError::Wrap(e))
 }
-
-const KEYWORD_MAP: &[u8] = b"map";
-const KEYWORD_LAYER: &[u8] = b"layer";
-const KEYWORD_SOURCE: &[u8] = b"source";
-const KEYWORD_SRID: &[u8] = b"srid";
-const KEYWORD_EXTENT: &[u8] = b"extent";
-const KEYWORD_DATA: &[u8] = b"data";
-const KEYWORD_SYM: &[u8] = b"sym";
-const KEYWORD_SELECT: &[u8] = b"select";
-const KEYWORD_COMMAND: &[u8] = b"->";
-const KEYWORD_OR: &[u8] = b"|";
-const KEYWORD_AND: &[u8] = b"&";
-
-const COMMAND_CIRCLE: &[u8] = b"circle";
-const COMMAND_SQUARE: &[u8] = b"square";
-const COMMAND_FILL: &[u8] = b"fill";
-const COMMAND_STROKE: &[u8] = b"stroke";
-const COMMAND_PATTERN: &[u8] = b"pattern";
-const COMMAND_LABEL: &[u8] = b"label";
-
-const SOURCE_DRIVER_GEOJSON: &[u8] = b"geojson";
-const SOURCE_DRIVER_POSTGIS: &[u8] = b"postgis";
-const SOURCE_DRIVER_SHAPEFILE: &[u8] = b"shapefile";
-
-const DATATYPE_STRING: &[u8] = b"string";
-const DATATYPE_NUMBER: &[u8] = b"number";
-const DATATYPE_BOOLEAN: &[u8] = b"bool";
-
-// const GEOMETRY_POINT: &[u8] = b"point";
-// const GEOMETRY_LINE: &[u8] = b"line";
-// const GEOMETRY_POLYGON: &[u8] = b"polygon";
 
 const TRUE: &[u8] = b"true";
 const FALSE: &[u8] = b"false";

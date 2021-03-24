@@ -6,6 +6,6 @@ pub trait Function {
     fn call(&self, args: Vec<Literal>) -> ApplyResult<Literal>;
 }
 
-pub fn find_function(name: &str) -> ApplyResult<Box<dyn Function>> {
+pub fn find_function(_name: &str) -> ApplyResult<Box<dyn Function>> {
     todo!()
 }
