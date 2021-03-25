@@ -26,7 +26,7 @@ impl SymCommand for Circle {
         }
         .ok_or(ApplyError::Geometry)?;
 
-        let size = match input.scope.resolve(self.radius.clone())? {
+        let size = match input.resolve(self.radius.clone())? {
             Literal::Number(n) => match n {
                 Num::Float(f) => f,
                 Num::Integer(i) => i as f64,

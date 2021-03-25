@@ -1,27 +1,29 @@
 use crate::{
     error::{ApplyError, ApplyResult},
     geom::{from_geojson, Geometry},
-    scope::{FeatureScope, Scope},
+    source::{Resolver, Source},
 };
-use crate::{op::OpList, source::Source};
+use crate::{op::OpList, source::SourceT};
 use geojson::Feature;
-use parser::ast::{Command, PredGroup, Predicate, Sym};
+use parser::ast::{Command, Literal, PredGroup, Predicate, Sym, Value};
 
 pub mod circle;
 pub mod clear;
 
-pub struct SymInput<'a> {
-    pub scope: Box<dyn Scope + 'a>,
+pub struct SymInput {
+    source: Source,
+    feature: Feature,
     // feature geometry
     pub geometry: Geometry,
     // previous operations
     pub ops: OpList,
 }
 
-impl<'a> SymInput<'a> {
-    pub fn new(scope: Box<dyn Scope + 'a>, geometry: Geometry, ops: OpList) -> Self {
+impl SymInput {
+    pub fn new(source: Source, feature: Feature, geometry: Geometry, ops: OpList) -> Self {
         Self {
-            scope,
+            source,
+            feature,
             geometry,
             ops,
         }
@@ -30,6 +32,10 @@ impl<'a> SymInput<'a> {
     pub fn concat_ops(&self, ops: OpList) -> SymOuput {
         let ops = [self.ops.clone(), ops].concat();
         SymOuput { ops }
+    }
+
+    pub fn resolve(&self, value: Value) -> ApplyResult<Literal> {
+        self.source.resolve(value, &self.feature)
     }
 }
 
@@ -49,13 +55,13 @@ pub trait SymCommand {
 
 pub fn exec_command<'a>(
     command: &Command,
-    scope: Box<dyn Scope + 'a>,
+    source: Source,
     feature: &Feature,
     output: SymOuput,
 ) -> ApplyResult<SymOuput> {
     let opt_geom = feature.geometry.as_ref();
     if let Some(geom) = opt_geom.and_then(|r| from_geojson(r.clone())) {
-        let input = SymInput::new(scope, geom, output.ops);
+        let input = SymInput::new(source, feature.clone(), geom, output.ops);
         match command {
             Command::Clear(c) => c.exec(&input),
             Command::Circle(c) => c.exec(&input),
@@ -66,78 +72,83 @@ pub fn exec_command<'a>(
     }
 }
 
-pub fn exec_consequent<'a>(
+pub fn exec_consequent(
     commands: Vec<Command>,
-    scope: Box<dyn Scope + 'a>,
+    source: Source,
     feature: &Feature,
 ) -> ApplyResult<SymOuput> {
     let init_output = Ok(SymOuput { ops: Vec::new() });
 
     commands.iter().fold(init_output, |acc, command| {
-        acc.and_then(|output| exec_command(command, scope, feature, output))
+        acc.and_then(|output| exec_command(command, source.clone(), feature, output))
     })
 }
 
-pub fn eval_predicate<'a>(predicate: Predicate, scope: Box<dyn Scope + 'a>) -> ApplyResult<bool> {
+pub fn eval_predicate(
+    predicate: Predicate,
+    source: Source,
+    feature: &Feature,
+) -> ApplyResult<bool> {
     match predicate {
-        Predicate::Equal((left, right)) => scope
-            .resolve(left)
-            .and_then(|left| scope.resolve(right).map(|right| left == right)),
-        Predicate::NotEqual((left, right)) => scope
-            .resolve(left)
-            .and_then(|left| scope.resolve(right).map(|right| left != right)),
-        Predicate::GreaterThan((left, right)) => scope
-            .resolve(left)
-            .and_then(|left| scope.resolve(right).map(|right| left > right)),
-        Predicate::GreaterThanOrEqual((left, right)) => scope
-            .resolve(left)
-            .and_then(|left| scope.resolve(right).map(|right| left >= right)),
-        Predicate::LesserThan((left, right)) => scope
-            .resolve(left)
-            .and_then(|left| scope.resolve(right).map(|right| left < right)),
-        Predicate::LesserThanOrEqual((left, right)) => scope
-            .resolve(left)
-            .and_then(|left| scope.resolve(right).map(|right| left <= right)),
+        Predicate::Equal((left, right)) => source
+            .resolve(left, feature)
+            .and_then(|left| source.resolve(right, feature).map(|right| left == right)),
+        Predicate::NotEqual((left, right)) => source
+            .resolve(left, feature)
+            .and_then(|left| source.resolve(right, feature).map(|right| left != right)),
+        Predicate::GreaterThan((left, right)) => source
+            .resolve(left, feature)
+            .and_then(|left| source.resolve(right, feature).map(|right| left > right)),
+        Predicate::GreaterThanOrEqual((left, right)) => source
+            .resolve(left, feature)
+            .and_then(|left| source.resolve(right, feature).map(|right| left >= right)),
+        Predicate::LesserThan((left, right)) => source
+            .resolve(left, feature)
+            .and_then(|left| source.resolve(right, feature).map(|right| left < right)),
+        Predicate::LesserThanOrEqual((left, right)) => source
+            .resolve(left, feature)
+            .and_then(|left| source.resolve(right, feature).map(|right| left <= right)),
     }
 }
 
-pub fn eval_predicate_group<'a>(group: PredGroup, scope: Box<dyn Scope + 'a>) -> ApplyResult<bool> {
+pub fn eval_predicate_group<'a>(
+    group: PredGroup,
+    source: Source,
+    feature: &Feature,
+) -> ApplyResult<bool> {
     match group {
         PredGroup::Empty => Ok(false),
-        PredGroup::Pred(predicate) => eval_predicate(predicate, scope),
-        PredGroup::And { left, right } => eval_predicate_group(*left, scope)
-            .and_then(|left| eval_predicate_group(*right, scope).map(|right| left && right)),
-        PredGroup::Or { left, right } => eval_predicate_group(*left, scope)
-            .and_then(|left| eval_predicate_group(*right, scope).map(|right| left || right)),
+        PredGroup::Pred(predicate) => eval_predicate(predicate, source, feature),
+        PredGroup::And { left, right } => eval_predicate_group(*left, source.clone(), feature)
+            .and_then(|left| {
+                eval_predicate_group(*right, source.clone(), feature).map(|right| left && right)
+            }),
+        PredGroup::Or { left, right } => eval_predicate_group(*left, source.clone(), feature)
+            .and_then(|left| {
+                eval_predicate_group(*right, source.clone(), feature).map(|right| left || right)
+            }),
     }
 }
 
-pub fn make_symbology_for_feature<'a, S>(
+pub fn make_symbology_for_feature(
     sym: Sym,
-    source: &'a S,
+    source: Source,
     feature: &Feature,
-) -> ApplyResult<OpList>
-where
-    S: Source,
-{
+) -> ApplyResult<OpList> {
     let group = sym.predicate.clone();
-    let scope = Box::new(FeatureScope::new(source, feature.clone()));
-    if eval_predicate_group(group, scope)? {
+    if eval_predicate_group(group, source.clone(), feature)? {
         let commands = sym.consequent.clone();
-        let output = exec_consequent(commands, scope, feature)?;
+        let output = exec_consequent(commands, source.clone(), feature)?;
         Ok(output.ops)
     } else {
         Ok(Vec::new())
     }
 }
 
-pub fn make_symbology<S>(sym: Sym, source: &S) -> ApplyResult<OpList>
-where
-    S: Source,
-{
+pub fn make_symbology(sym: Sym, source: Source) -> ApplyResult<OpList> {
     let ops = source
         .iter()
-        .filter_map(|f| make_symbology_for_feature(sym.clone(), source, f).ok())
+        .filter_map(|f| make_symbology_for_feature(sym.clone(), source.clone(), f).ok())
         .flatten()
         .collect();
     Ok(ops)

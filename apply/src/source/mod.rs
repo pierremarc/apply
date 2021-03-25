@@ -1,15 +1,21 @@
 use geojson::Feature;
-use parser::ast::{Literal, Num, Select};
-use serde_json::Value;
-use std::convert::TryInto;
+use geojson_source::GeoJSON;
+use parser::ast::{Constructor, Literal, Num, Select, Value};
+use serde_json::Value as JsonValue;
+use std::{cell::RefCell, convert::TryInto, rc::Rc};
+use Value::{Data, Lit};
 
-use crate::error::{ApplyError, ApplyResult};
+use crate::{
+    error::{ApplyError, ApplyResult},
+    function::find_function,
+};
 
 pub mod geojson_source;
 
-pub trait Source: Sized {
+pub trait SourceT {
     fn iter(&self) -> Box<dyn Iterator<Item = &Feature> + '_>;
-
+}
+pub trait Resolver: Clone {
     fn select(&self, select: Select, feature: &Feature) -> ApplyResult<Literal> {
         let props = feature
             .properties
@@ -33,14 +39,65 @@ pub trait Source: Sized {
                 &select.selector
             )))
     }
+
+    fn resolve(&self, value: Value, feature: &Feature) -> ApplyResult<Literal> {
+        match value {
+            Lit(l) => Ok(l),
+            Value::Fn(f) => {
+                let func = find_function(&f.name)?;
+                let mut args: Vec<Literal> = Vec::new();
+                for arg in f.args.iter() {
+                    args.push(self.resolve(arg.clone(), feature)?);
+                }
+                func.call(args)
+            }
+            Data(data) => match *data.constructor {
+                Constructor::Val(inner) => self.resolve(inner, feature),
+                Constructor::Select(select) => self.select(select, feature),
+            },
+        }
+    }
 }
 
-pub fn try_literal(v: &Value) -> Option<Literal> {
-    match v {
-        Value::Null => Some(Literal::Nil),
-        Value::Bool(b) => Some(Literal::Boolean(*b)),
-        Value::String(s) => Some(Literal::String(s.clone())),
-        Value::Number(n) => {
+#[derive(Clone)]
+pub enum Source {
+    GeoJSON(GeoJSON),
+}
+
+impl SourceT for Source {
+    fn iter(&self) -> Box<dyn Iterator<Item = &Feature> + '_> {
+        match self {
+            Source::GeoJSON(gj) => gj.iter(),
+        }
+    }
+}
+
+impl Resolver for Source {
+    fn select(&self, select: Select, feature: &Feature) -> ApplyResult<Literal> {
+        match self {
+            Source::GeoJSON(gj) => gj.select(select, feature),
+        }
+    }
+
+    fn resolve(&self, value: Value, feature: &Feature) -> ApplyResult<Literal> {
+        match self {
+            Source::GeoJSON(gj) => gj.resolve(value, feature),
+        }
+    }
+}
+
+pub type SharedSource = Rc<RefCell<dyn SourceT>>;
+
+// pub fn new_source<S: Source>(source: S) -> SharedSource {
+//     Rc::new(RefCell::new(source))
+// }
+
+pub fn try_literal(json_value: &JsonValue) -> Option<Literal> {
+    match json_value {
+        JsonValue::Null => Some(Literal::Nil),
+        JsonValue::Bool(b) => Some(Literal::Boolean(*b)),
+        JsonValue::String(s) => Some(Literal::String(s.clone())),
+        JsonValue::Number(n) => {
             if n.is_i64() {
                 n.as_i64().map(|n| Literal::Number(Num::Integer(n)))
             } else if n.is_u64() {

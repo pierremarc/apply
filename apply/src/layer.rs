@@ -1,10 +1,10 @@
 use crate::source::geojson_source::GeoJSON;
-use crate::source::Source;
+use crate::source::SourceT;
 use parser::ast::Source as SourceSpec;
 
 use crate::error::ApplyResult;
 
-pub fn make_source(spec: SourceSpec) -> ApplyResult<impl Source> {
+pub fn make_source(spec: SourceSpec) -> ApplyResult<impl SourceT> {
     let driver = spec.driver;
     let path = spec.path;
     let srid = spec.srid;

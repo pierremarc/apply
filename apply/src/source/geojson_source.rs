@@ -1,12 +1,15 @@
+use std::rc::Rc;
+
 use geojson::{Feature, FeatureCollection};
 use parser::ast::Num;
 
 use crate::error::{ApplyError, ApplyResult};
 
-use super::Source;
+use super::{Resolver, SourceT};
 
+#[derive(Clone)]
 pub struct GeoJSON {
-    pub data: FeatureCollection,
+    pub data: Rc<FeatureCollection>,
     pub srid: i64,
 }
 
@@ -31,13 +34,15 @@ impl GeoJSON {
 
         Ok(GeoJSON {
             srid,
-            data: load_file(path)?,
+            data: Rc::new(load_file(path)?),
         })
     }
 }
 
-impl Source for GeoJSON {
+impl SourceT for GeoJSON {
     fn iter(&self) -> Box<dyn Iterator<Item = &Feature> + '_> {
         Box::new(self.data.features.iter())
     }
 }
+
+impl Resolver for GeoJSON {}
