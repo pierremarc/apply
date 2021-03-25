@@ -18,22 +18,6 @@ pub fn make_source(spec: SourceSpec) -> ApplyResult<Source> {
     }
 }
 
-// pub fn make_scope(spec: LayerBlock, parent: &BaseScope) -> ApplyResult<BaseScope> {
-//     let values: HashMap<String, Literal> = spec
-//         .directives
-//         .iter()
-//         .filter_map(|directive| match directive {
-//             Directive::Data(data) => match (*data.constructor).clone() {
-//                 Constructor::Val(val) => parent.resolve(val).map(|l| (data.ident.clone(), l)).ok(),
-//                 _ => None,
-//             },
-//             _ => None,
-//         })
-//         .collect();
-
-//     Ok(parent.concat(values))
-// }
-
 pub fn run_layer(spec: LayerBlock) -> ApplyResult<OpList> {
     let source = spec
         .directives

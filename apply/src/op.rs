@@ -1,3 +1,5 @@
+use core::fmt;
+
 use crate::geom::{point, Point};
 
 #[derive(Debug, Clone)]
@@ -26,6 +28,36 @@ pub enum Op {
         end: Point,
     },
     Close,
+}
+
+fn point_as_string(p: &Point) -> String {
+    format!("({}, {})", p.x(), p.y())
+}
+
+impl std::fmt::Display for Op {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Op::Text { text, color, x, y } => write!(f, "[text {} {} {} {}]", text, color, x, y),
+            Op::Font { name, size } => write!(f, "[font {} {}]", name, size),
+            Op::Fill(color) => write!(f, "[fill {}]", color),
+            Op::Stroke { color, size } => write!(f, "[stroke {} {}]", color, size),
+            Op::Start => write!(f, "[start]"),
+            Op::Move(p) => write!(f, "[move {}]", point_as_string(p)),
+            Op::Line(p) => write!(f, "[line {}]", point_as_string(p)),
+            Op::Cubic {
+                control_1,
+                control_2,
+                end,
+            } => write!(
+                f,
+                "[cubic {} {} {}]",
+                point_as_string(control_1),
+                point_as_string(control_2),
+                point_as_string(end)
+            ),
+            Op::Close => write!(f, "[close]"),
+        }
+    }
 }
 
 pub type OpList = Vec<Op>;

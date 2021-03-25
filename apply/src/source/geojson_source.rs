@@ -1,7 +1,7 @@
-use std::rc::Rc;
-
-use geojson::{Feature, FeatureCollection};
+use geojson::{Feature, FeatureCollection, GeoJson};
 use parser::ast::Num;
+use std::fs::read_to_string;
+use std::rc::Rc;
 
 use crate::error::{ApplyError, ApplyResult};
 
@@ -13,8 +13,13 @@ pub struct GeoJSON {
     pub srid: i64,
 }
 
-fn load_file(_path: String) -> ApplyResult<FeatureCollection> {
-    todo!()
+fn load_file(path: String) -> ApplyResult<FeatureCollection> {
+    let json_str = read_to_string(&path)?;
+    let gj = json_str.parse::<GeoJson>()?;
+    match gj {
+        GeoJson::FeatureCollection(fc) => Ok(fc),
+        _ => Err(ApplyError::NotAFeatureCollection(path)),
+    }
 }
 
 impl GeoJSON {

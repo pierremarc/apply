@@ -35,20 +35,6 @@ pub enum Literal {
 // }
 
 #[derive(Debug, Clone)]
-pub enum BlockKeyword {
-    Map,
-    Layer,
-}
-
-#[derive(Debug, Clone)]
-pub enum ExprKeyword {
-    Srid,
-    Extent,
-    Data,
-    Sym,
-}
-
-#[derive(Debug, Clone)]
 pub struct FunctionCall {
     pub name: String,
     pub args: ValueList,
