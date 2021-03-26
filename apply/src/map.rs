@@ -7,7 +7,7 @@ use crate::{
 };
 
 pub fn run_map(spec: MapSpec) -> ApplyResult<OpList> {
-    let _srid = spec
+    let srid = spec
         .map
         .directives
         .iter()
@@ -29,7 +29,7 @@ pub fn run_map(spec: MapSpec) -> ApplyResult<OpList> {
     Ok(spec
         .layers
         .iter()
-        .filter_map(|layer| run_layer(layer.clone()).ok())
+        .filter_map(|layer| run_layer(layer.clone(), srid).ok())
         .flatten()
         .collect())
 }

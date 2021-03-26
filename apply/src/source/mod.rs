@@ -1,6 +1,7 @@
 use geojson::Feature;
 use geojson_source::GeoJSON;
 use parser::ast::{Constructor, Literal, Num, Select, Value};
+use proj::Proj;
 use serde_json::Value as JsonValue;
 use std::{cell::RefCell, convert::TryInto, rc::Rc};
 use Value::{Data, Lit};
@@ -14,6 +15,7 @@ pub mod geojson_source;
 
 pub trait SourceT {
     fn iter(&self) -> Box<dyn Iterator<Item = &Feature> + '_>;
+    fn proj(&self) -> Proj;
 }
 pub trait Resolver: Clone {
     fn select(&self, select: Select, feature: &Feature) -> ApplyResult<Literal> {
@@ -68,6 +70,12 @@ impl SourceT for Source {
     fn iter(&self) -> Box<dyn Iterator<Item = &Feature> + '_> {
         match self {
             Source::GeoJSON(gj) => gj.iter(),
+        }
+    }
+
+    fn proj(&self) -> Proj {
+        match self {
+            Source::GeoJSON(gj) => gj.proj(),
         }
     }
 }

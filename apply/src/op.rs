@@ -1,5 +1,3 @@
-use core::fmt;
-
 use crate::geom::{point, Point};
 
 #[derive(Debug, Clone)]

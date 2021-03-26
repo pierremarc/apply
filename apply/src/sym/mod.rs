@@ -60,7 +60,8 @@ pub fn exec_command<'a>(
     output: SymOuput,
 ) -> ApplyResult<SymOuput> {
     let opt_geom = feature.geometry.as_ref();
-    if let Some(geom) = opt_geom.and_then(|r| from_geojson(r.clone())) {
+    let proj = source.proj();
+    if let Some(geom) = opt_geom.and_then(|r| from_geojson(r.clone(), &proj)) {
         let input = SymInput::new(source, feature.clone(), geom, output.ops);
         match command {
             Command::Clear(c) => c.exec(&input),
