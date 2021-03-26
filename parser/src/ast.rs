@@ -1,7 +1,27 @@
+use std::{convert::TryFrom, fmt};
+
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum Num {
     Integer(i64),
     Float(f64),
+}
+
+impl fmt::Display for Num {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Num::Float(n) => write!(f, "{}", n),
+            Num::Integer(n) => write!(f, "{}", n),
+        }
+    }
+}
+
+impl Num {
+    pub fn as_float(&self) -> f64 {
+        match self {
+            Num::Float(f) => *f,
+            Num::Integer(i) => *i as f64,
+        }
+    }
 }
 
 // impl PartialEq for Num {
@@ -20,6 +40,76 @@ pub enum Literal {
     Number(Num),
     String(String),
     Boolean(bool),
+}
+
+impl From<i64> for Literal {
+    fn from(value: i64) -> Self {
+        Literal::Number(Num::Integer(value))
+    }
+}
+
+impl From<f64> for Literal {
+    fn from(value: f64) -> Self {
+        Literal::Number(Num::Float(value))
+    }
+}
+
+impl From<bool> for Literal {
+    fn from(value: bool) -> Self {
+        Literal::Boolean(value)
+    }
+}
+
+impl From<String> for Literal {
+    fn from(value: String) -> Self {
+        Literal::String(value)
+    }
+}
+
+impl From<&str> for Literal {
+    fn from(value: &str) -> Self {
+        Literal::String(String::from(value))
+    }
+}
+
+impl TryFrom<Literal> for f64 {
+    type Error = &'static str;
+    fn try_from(value: Literal) -> Result<Self, Self::Error> {
+        match value {
+            Literal::Number(num) => Ok(num.as_float()),
+            _ => Err("NaN"),
+        }
+    }
+}
+
+impl TryFrom<Literal> for i64 {
+    type Error = &'static str;
+    fn try_from(value: Literal) -> Result<Self, Self::Error> {
+        match value {
+            Literal::Number(Num::Integer(n)) => Ok(n),
+            _ => Err("Not an Integer"),
+        }
+    }
+}
+
+impl TryFrom<Literal> for String {
+    type Error = &'static str;
+    fn try_from(value: Literal) -> Result<Self, Self::Error> {
+        match value {
+            Literal::String(s) => Ok(s),
+            _ => Err("Not a String"),
+        }
+    }
+}
+
+impl TryFrom<Literal> for bool {
+    type Error = &'static str;
+    fn try_from(value: Literal) -> Result<Self, Self::Error> {
+        match value {
+            Literal::Boolean(s) => Ok(s),
+            _ => Err("Not a Boolean"),
+        }
+    }
 }
 
 // impl PartialEq for Literal {

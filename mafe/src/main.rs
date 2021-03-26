@@ -4,8 +4,9 @@ use parser::parse_str;
 use std::fs::read_to_string;
 use std::path::Path;
 
-fn run_main(map_path: &Path) {
-    match read_to_string(map_path) {
+fn run_main(map_path: String) {
+    let map_path = Path::new(map_path.as_str());
+    match read_to_string(&map_path) {
         Err(e) => println!("Failed to read {}: {}", map_path.display(), e),
         Ok(content) => {
             if let Ok(spec) = parse_str(&content) {
@@ -39,7 +40,6 @@ fn main() {
         .arg(map_file)
         .get_matches();
 
-    let map_path = Path::new(matches.value_of("map_file").unwrap());
-
-    run_main(map_path)
+    let map_path = matches.value_of("map_file").unwrap();
+    run_main(String::from(map_path));
 }

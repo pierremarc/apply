@@ -1,3 +1,5 @@
+use std::convert::TryFrom;
+
 use crate::{
     error::{ApplyError, ApplyResult},
     geom::{from_geojson, Geometry},
@@ -9,6 +11,7 @@ use parser::ast::{Command, Literal, PredGroup, Predicate, Sym, Value};
 
 pub mod circle;
 pub mod clear;
+pub mod stroke;
 
 pub struct SymInput {
     source: Source,
@@ -37,6 +40,27 @@ impl SymInput {
     pub fn resolve(&self, value: Value) -> ApplyResult<Literal> {
         self.source.resolve(value, &self.feature)
     }
+
+    pub fn resolve_float(&self, value: Value) -> ApplyResult<f64> {
+        match self.source.resolve(value, &self.feature) {
+            Ok(val) => f64::try_from(val).map_err(|_| ApplyError::Conversion),
+            Err(err) => Err(err),
+        }
+    }
+
+    pub fn resolve_int(&self, value: Value) -> ApplyResult<i64> {
+        match self.source.resolve(value, &self.feature) {
+            Ok(val) => i64::try_from(val).map_err(|_| ApplyError::Conversion),
+            Err(err) => Err(err),
+        }
+    }
+
+    pub fn resolve_string(&self, value: Value) -> ApplyResult<String> {
+        match self.source.resolve(value, &self.feature) {
+            Ok(val) => String::try_from(val).map_err(|_| ApplyError::Conversion),
+            Err(err) => Err(err),
+        }
+    }
 }
 
 pub struct SymOuput {
@@ -57,19 +81,15 @@ pub fn exec_command<'a>(
     command: &Command,
     source: Source,
     feature: &Feature,
+    geom: Geometry,
     output: SymOuput,
 ) -> ApplyResult<SymOuput> {
-    let opt_geom = feature.geometry.as_ref();
-    let proj = source.proj();
-    if let Some(geom) = opt_geom.and_then(|r| from_geojson(r.clone(), &proj)) {
-        let input = SymInput::new(source, feature.clone(), geom, output.ops);
-        match command {
-            Command::Clear(c) => c.exec(&input),
-            Command::Circle(c) => c.exec(&input),
-            _ => Err(ApplyError::CommandNotFound),
-        }
-    } else {
-        Ok(output)
+    let input = SymInput::new(source, feature.clone(), geom, output.ops);
+    match command {
+        Command::Clear(c) => c.exec(&input),
+        Command::Circle(c) => c.exec(&input),
+        Command::Stroke(c) => c.exec(&input),
+        _ => Err(ApplyError::CommandNotFound),
     }
 }
 
@@ -79,10 +99,17 @@ pub fn exec_consequent(
     feature: &Feature,
 ) -> ApplyResult<SymOuput> {
     let init_output = Ok(SymOuput { ops: Vec::new() });
-
-    commands.iter().fold(init_output, |acc, command| {
-        acc.and_then(|output| exec_command(command, source.clone(), feature, output))
-    })
+    let opt_geom = feature.geometry.as_ref();
+    let proj = source.proj();
+    if let Some(geom) = opt_geom.and_then(|r| from_geojson(r.clone(), &proj)) {
+        commands.iter().fold(init_output, |acc, command| {
+            acc.and_then(|output| {
+                exec_command(command, source.clone(), feature, geom.clone(), output)
+            })
+        })
+    } else {
+        init_output
+    }
 }
 
 pub fn eval_predicate(
@@ -149,7 +176,11 @@ pub fn make_symbology_for_feature(
 pub fn make_symbology(sym: Sym, source: Source) -> ApplyResult<OpList> {
     let ops = source
         .iter()
-        .filter_map(|f| make_symbology_for_feature(sym.clone(), source.clone(), f).ok())
+        .enumerate()
+        .filter_map(|(i, f)| {
+            println!("[{}]", i);
+            make_symbology_for_feature(sym.clone(), source.clone(), f).ok()
+        })
         .flatten()
         .collect();
     Ok(ops)

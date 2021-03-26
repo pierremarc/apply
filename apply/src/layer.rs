@@ -4,6 +4,7 @@ use crate::{
     source::{geojson_source::GeoJSON, Source},
     sym::make_symbology,
 };
+
 use parser::ast::{Directive, LayerBlock, Source as SourceSpec};
 
 use crate::error::ApplyResult;

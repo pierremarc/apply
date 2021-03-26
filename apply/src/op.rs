@@ -60,6 +60,10 @@ impl std::fmt::Display for Op {
 
 pub type OpList = Vec<Op>;
 
+pub fn start() -> Op {
+    Op::Start
+}
+
 pub fn move_to(x: f64, y: f64) -> Op {
     Op::Move(point(x, y))
 }
