@@ -1,4 +1,4 @@
-use crate::geom::{point, Point};
+use crate::geom::{point, Mat, Point};
 
 #[derive(Debug, Clone)]
 pub enum Op {
@@ -26,6 +26,9 @@ pub enum Op {
         end: Point,
     },
     Close,
+    Transform(Mat),
+    Save,
+    Restore,
 }
 
 fn point_as_string(p: &Point) -> String {
@@ -33,27 +36,34 @@ fn point_as_string(p: &Point) -> String {
 }
 
 impl std::fmt::Display for Op {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Op::Text { text, color, x, y } => write!(f, "[text {} {} {} {}]", text, color, x, y),
-            Op::Font { name, size } => write!(f, "[font {} {}]", name, size),
-            Op::Fill(color) => write!(f, "[fill {}]", color),
-            Op::Stroke { color, size } => write!(f, "[stroke {} {}]", color, size),
-            Op::Start => write!(f, "[start]"),
-            Op::Move(p) => write!(f, "[move {}]", point_as_string(p)),
-            Op::Line(p) => write!(f, "[line {}]", point_as_string(p)),
+            Op::Text { text, color, x, y } => {
+                write!(formatter, "[text {} {} {} {}]", text, color, x, y)
+            }
+            Op::Font { name, size } => write!(formatter, "[font {} {}]", name, size),
+            Op::Fill(color) => write!(formatter, "[fill {}]", color),
+            Op::Stroke { color, size } => write!(formatter, "[stroke {} {}]", color, size),
+            Op::Start => write!(formatter, "[start]"),
+            Op::Move(p) => write!(formatter, "[move {}]", point_as_string(p)),
+            Op::Line(p) => write!(formatter, "[line {}]", point_as_string(p)),
             Op::Cubic {
                 control_1,
                 control_2,
                 end,
             } => write!(
-                f,
+                formatter,
                 "[cubic {} {} {}]",
                 point_as_string(control_1),
                 point_as_string(control_2),
                 point_as_string(end)
             ),
-            Op::Close => write!(f, "[close]"),
+            Op::Close => write!(formatter, "[close]"),
+            Op::Save => write!(formatter, "[save]"),
+            Op::Restore => write!(formatter, "[restore]"),
+            Op::Transform((a, b, c, d, e, f)) => {
+                write!(formatter, "[transform {} {} {} {} {} {}]", a, b, c, d, e, f)
+            }
         }
     }
 }

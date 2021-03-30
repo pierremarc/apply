@@ -10,6 +10,8 @@ use crate::error::{ApplyError, ApplyResult};
 pub type Geometry = GeometryT<f64>;
 pub type Point = PointT<f64>;
 
+pub type Mat = (f64, f64, f64, f64, f64, f64);
+
 pub fn point(x: f64, y: f64) -> Point {
     Point::new(x, y)
 }

@@ -4,6 +4,8 @@ use parser::parse_str;
 use std::fs::read_to_string;
 use std::path::Path;
 
+mod render;
+
 fn run_main(map_path: String) {
     let map_path = Path::new(map_path.as_str());
     match read_to_string(&map_path) {

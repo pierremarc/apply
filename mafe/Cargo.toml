@@ -7,6 +7,6 @@ edition = "2018"
 
 [dependencies]
 clap = "2.33.3"
-termion = "1.5.6"
+piet-common = "0.4.1"
 apply = { path = "../apply" }
 parser = { path = "../parser" }
