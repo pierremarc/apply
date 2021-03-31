@@ -1,5 +1,5 @@
 use apply::op::OpList;
-use piet_common::{
+use piet::{
     kurbo::{PathEl, Point, Shape},
     Color, Error, RenderContext,
 };
