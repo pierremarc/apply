@@ -1,6 +1,6 @@
-use apply::op::OpList;
+use apply::op::{Op, OpList};
 use piet::{
-    kurbo::{PathEl, Point, Shape},
+    kurbo::{Affine, PathEl, Point},
     Color, Error, RenderContext,
 };
 
@@ -28,13 +28,23 @@ where
                 kpoint(end),
             )),
             Op::Close => path.push(PathEl::ClosePath),
-            Op::Fill(color) => ctx.fill(path.into(), Color::from_hex_str(color)?)?,
-            Op::Stroke(color, size) => {
-                ctx.stroke(path.into(), Color::from_hex_str(color)?, size)?
+            Op::Fill(color) => {
+                let brush = Color::from_hex_str(color).map_err(|_| Error::InvalidInput)?;
+                ctx.fill(path.as_slice(), &brush);
             }
-            Op::Save => ctx.save(),
-            Op::Restore => ctx.restore(),
-            Op::Transform((a, b, c, d, e, f)) => ctx.transform([a, b, c, d, e, f]),
+            Op::Stroke { color, size } => {
+                let brush = Color::from_hex_str(color).map_err(|_| Error::InvalidInput)?;
+                ctx.stroke(path.as_slice(), &brush, *size)
+            }
+            Op::Save => {
+                ctx.save();
+            }
+            Op::Restore => {
+                ctx.restore();
+            }
+            Op::Transform((a, b, c, d, e, f)) => {
+                ctx.transform(Affine::new([*a, *b, *c, *d, *e, *f]))
+            }
             _ => {}
         }
     }

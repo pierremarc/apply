@@ -2,7 +2,7 @@ mod piet_cairo;
 mod render;
 
 use apply::{op::OpList, run_map};
-use cairo::{Context, Format, ImageSurface};
+use cairo::{Context, Format, ImageSurface, IoError};
 use clap::{App, Arg};
 use parser::parse_str;
 use piet_cairo::CairoRenderContext;
@@ -17,8 +17,9 @@ fn render_png(ops: &OpList) {
     let cairo_context = Context::new(&surface);
     let mut piet_context = CairoRenderContext::new(&cairo_context);
     if let Ok(()) = render(&mut piet_context, ops) {
-        File::create(path)
-            .and_then(|file| surface.write_to_png(&mut file).map_err(Into::into))
+        File::create(file_name)
+            .map_err(|e| IoError::Io(e))
+            .and_then(|mut file| surface.write_to_png(&mut file))
             .unwrap();
     } else {
         println!("Failed to render");

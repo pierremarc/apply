@@ -4,42 +4,55 @@
 
 // mod text;
 
-use std::borrow::Cow;
+use std::{borrow::Cow, ops::RangeBounds};
 
 use cairo::{Context, Filter, Format, ImageSurface, Matrix, SurfacePattern};
 
 use piet::{
     kurbo::{Affine, PathEl, Point, QuadBez, Rect, Shape, Size},
-    HitTestPosition,
+    FontFamily, HitTestPosition, LineMetric, TextAlignment, TextAttribute, TextStorage,
 };
 use piet::{
     Color, Error, FixedGradient, HitTestPoint, Image, ImageFormat, InterpolationMode, IntoBrush,
     LineCap, LineJoin, RenderContext, StrokeStyle, Text, TextLayout, TextLayoutBuilder,
 };
 
-struct NoText;
-struct NoTextLayout;
-struct NoTextlayoutBuilder;
+#[derive(Clone)]
+pub struct NoText;
 
-impl TextLayoutBuilder for NoTextLayoutBuilder {
+#[derive(Clone)]
+pub struct NoTextLayout;
+#[derive(Clone)]
+pub struct NoTextlayoutBuilder;
+
+impl TextLayoutBuilder for NoTextlayoutBuilder {
     type Out = NoTextLayout;
-    fn max_width(mut self, width: f64) -> Self {
+    fn max_width(self, _width: f64) -> Self {
         self
     }
-    fn alignment(self, alignment: TextAlignment) -> Self {
+    fn alignment(self, _alignment: TextAlignment) -> Self {
         self
     }
 
-    fn default_attribute(mut self, attribute: impl Into<TextAttribute>) -> Self {
+    fn font(self, font: FontFamily, font_size: f64) -> Self {
+        self.default_attribute(TextAttribute::FontFamily(font))
+            .default_attribute(TextAttribute::FontSize(font_size))
+    }
+    fn text_color(self, color: Color) -> Self {
+        self.default_attribute(TextAttribute::TextColor(color))
+    }
+    fn default_attribute(self, _attribute: impl Into<TextAttribute>) -> Self {
         self
     }
+
     fn range_attribute(
-        mut self,
-        range: impl RangeBounds<usize>,
-        attribute: impl Into<TextAttribute>,
+        self,
+        _range: impl RangeBounds<usize>,
+        _attribute: impl Into<TextAttribute>,
     ) -> Self {
         self
     }
+
     fn build(self) -> Result<Self::Out, Error> {
         Err(Error::MissingFeature("text will wait"))
     }
@@ -62,11 +75,11 @@ impl TextLayout for NoTextLayout {
         ""
     }
 
-    fn line_text(&self, line_number: usize) -> Option<&str> {
+    fn line_text(&self, _line_number: usize) -> Option<&str> {
         None
     }
 
-    fn line_metric(&self, line_number: usize) -> Option<LineMetric> {
+    fn line_metric(&self, _line_number: usize) -> Option<LineMetric> {
         None
     }
 
@@ -74,10 +87,10 @@ impl TextLayout for NoTextLayout {
         0
     }
 
-    fn hit_test_point(&self, point: Point) -> HitTestPoint {
-        HitTestPoint::new(0, fasle)
+    fn hit_test_point(&self, _point: Point) -> HitTestPoint {
+        HitTestPoint::new(0, false)
     }
-    fn hit_test_text_position(&self, idx: usize) -> HitTestPosition {
+    fn hit_test_text_position(&self, _idx: usize) -> HitTestPosition {
         HitTestPosition::default()
     }
 }
@@ -86,7 +99,7 @@ impl Text for NoText {
     type TextLayout = NoTextLayout;
     type TextLayoutBuilder = NoTextlayoutBuilder;
 
-    fn font_family(&mut self, family_name: &str) -> Option<FontFamily> {
+    fn font_family(&mut self, _family_name: &str) -> Option<FontFamily> {
         None
     }
 
@@ -94,7 +107,7 @@ impl Text for NoText {
         Err(Error::NotSupported)
     }
 
-    fn new_text_layout(&mut self, text: impl TextStorage) -> Self::TextLayoutBuilder {
+    fn new_text_layout(&mut self, _text: impl TextStorage) -> Self::TextLayoutBuilder {
         NoTextlayoutBuilder
     }
 }
@@ -247,12 +260,7 @@ impl<'a> RenderContext for CairoRenderContext<'a> {
         &mut self.text
     }
 
-    fn draw_text(&mut self, layout: &Self::TextLayout, pos: impl Into<Point>) {
-        let pos = pos.into();
-        let offset = layout.pango_offset();
-        self.ctx.move_to(pos.x - offset.x, pos.y - offset.y);
-        pangocairo::show_layout(&self.ctx, layout.pango_layout());
-    }
+    fn draw_text(&mut self, _layout: &Self::TextLayout, _pos: impl Into<Point>) {}
 
     fn save(&mut self) -> Result<(), Error> {
         self.ctx.save();
