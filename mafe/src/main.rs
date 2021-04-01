@@ -16,16 +16,18 @@ use std::fs::File;
 use std::path::Path;
 
 fn get_initial_transform(args: &Arguments) -> Affine {
-    let x_scale = args.width() / args.extent_width();
-    let y_scale = args.height() / args.extent_height();
+    // let x_scale = args.width() / args.extent_width();
+    // let y_scale = args.height() / args.extent_height();
+
+    let scale = args.width() / args.extent_width();
     let init = Affine::IDENTITY;
     let translated = init
         * Affine::translate(Vec2 {
-            x: -args.west() * x_scale,
-            y: -args.south() * y_scale,
+            x: -args.west() * scale,
+            y: (-args.south() * scale), // + (args.height()),
         });
 
-    let scaled = translated * Affine::scale_non_uniform(x_scale, y_scale);
+    let scaled = translated * Affine::scale_non_uniform(scale, scale);
     dbg!(scaled)
 }
 
@@ -36,6 +38,8 @@ fn render_png(args: Arguments, ops: &OpList) {
     let surface =
         ImageSurface::create(Format::ARgb32, width, height).expect("Can't create surface");
     let cairo_context = Context::new(&surface);
+    cairo_context.translate(0.0, args.height());
+    cairo_context.scale(1.0, -1.0);
     let mut piet_context = CairoRenderContext::new(&cairo_context);
     piet_context.transform(get_initial_transform(&args));
     piet_context.save().unwrap();
