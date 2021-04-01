@@ -12,7 +12,7 @@ struct RGBColor {
 
 impl RGBColor {
     fn as_string(&self) -> String {
-        format!("rgb({}, {}, {})", self.r, self.g, self.b)
+        format!("#{:02X}{:02X}{:02X}", self.r, self.g, self.b)
     }
 }
 

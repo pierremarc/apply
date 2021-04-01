@@ -37,10 +37,10 @@ where
                 ctx.stroke(path.as_slice(), &brush, *size)
             }
             Op::Save => {
-                ctx.save();
+                ctx.save().unwrap();
             }
             Op::Restore => {
-                ctx.restore();
+                ctx.restore().unwrap();
             }
             Op::Transform((a, b, c, d, e, f)) => {
                 ctx.transform(Affine::new([*a, *b, *c, *d, *e, *f]))
