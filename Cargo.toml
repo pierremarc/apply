@@ -4,4 +4,5 @@ members = [
   "parser",
   "apply",
   "mafe",
+  "label",
 ]
