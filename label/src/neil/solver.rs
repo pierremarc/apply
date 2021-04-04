@@ -16,7 +16,7 @@
 //  limitations under the License.
 //////////////////////////////////////////////////////////////////////////////
 
-use rand::distributions::{Distribution, Standard, Uniform};
+use rand::distributions::{Distribution, Uniform};
 use rand::thread_rng;
 
 use super::problem::Problem;
@@ -101,7 +101,7 @@ impl Solver {
         let mut accepted = 0;
         let mut rejected = 0;
 
-        for _ in 0..self.iterations {
+        for i in 0..self.iterations {
             state = {
                 let next_state = problem.new_state(&state);
                 let new_energy = problem.energy(&next_state);
@@ -109,6 +109,12 @@ impl Solver {
                 attempted += 1;
 
                 let de = new_energy - energy;
+                println!("[{}] {}", i, temperature);
+
+                // println!(
+                //     "[{}] temp: {}, energy: {}, new_energy: {}",
+                //     i, temperature, energy, new_energy
+                // );
 
                 if de < 0.0 || range.sample(&mut rng) <= -de / temperature {
                     accepted += 1;
@@ -132,6 +138,7 @@ impl Solver {
                 temperature *= self.temperature_reduction;
 
                 if rejected >= self.max_rejects {
+                    println!("stop max rejected");
                     break;
                 }
             }
@@ -144,12 +151,12 @@ impl Solver {
 impl Default for Solver {
     fn default() -> Solver {
         Solver {
-            iterations: 1000000,
+            iterations: 10_000,
             initial_temperature: 100.0,
             temperature_reduction: 0.95,
-            max_attempts: 50,
-            max_accepts: 10,
-            max_rejects: 4,
+            max_attempts: 1000,
+            max_accepts: 100,
+            max_rejects: 100,
         }
     }
 }
