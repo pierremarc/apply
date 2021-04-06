@@ -7,20 +7,21 @@ use std::rc::Rc;
 use std::str::{self, FromStr};
 
 use crate::ast::{
-    pair, Circle, Clear, Command, Constructor, Data, DataType, Directive, DrawGeometry, Driver,
-    Extent, Fill, FunctionCall, Label, LayerBlock, Literal, MapBlock, MapSpec, Num, Pattern,
-    PredGroup, Predicate, Select, Source, Square, Srid, Stroke, Sym, Value,
+    pair, Anchor, Circle, Clear, Command, Constructor, Data, DataType, Directive, DrawGeometry,
+    Driver, Fill, FunctionCall, Intent, Label, LayerBlock, Literal, MapBlock, MapSpec, Num,
+    Pattern, PredGroup, Predicate, Select, Size, Source, Square, Srid, Stroke, Sym, Text, Value,
 };
 
 const KEYWORD_MAP: &[u8] = b"map";
 const KEYWORD_LAYER: &[u8] = b"layer";
 const KEYWORD_SOURCE: &[u8] = b"source";
 const KEYWORD_SRID: &[u8] = b"srid";
-const KEYWORD_EXTENT: &[u8] = b"extent";
 const KEYWORD_DATA: &[u8] = b"data";
 const KEYWORD_SYM: &[u8] = b"sym";
+const KEYWORD_LABEL: &[u8] = b"label";
 const KEYWORD_SELECT: &[u8] = b"select";
 const KEYWORD_COMMAND: &[u8] = b"->";
+const KEYWORD_INTENT: &[u8] = b"->";
 const KEYWORD_OR: &[u8] = b"|";
 const KEYWORD_AND: &[u8] = b"&";
 const KEYWORD_TRUE: &[u8] = b"true";
@@ -34,6 +35,13 @@ const COMMAND_FILL: &[u8] = b"fill";
 const COMMAND_STROKE: &[u8] = b"stroke";
 const COMMAND_PATTERN: &[u8] = b"pattern";
 const COMMAND_LABEL: &[u8] = b"label";
+
+const INTENT_ANCHOR: &[u8] = b"anchor";
+const INTENT_TEXT: &[u8] = b"text";
+const INTENT_SIZE: &[u8] = b"size";
+
+const ANCHOR_POINT: &[u8] = b"point";
+const ANCHOR_CENTROID: &[u8] = b"centroid";
 
 const SOURCE_DRIVER_GEOJSON: &[u8] = b"geojson";
 const SOURCE_DRIVER_POSTGIS: &[u8] = b"postgis";
@@ -524,43 +532,32 @@ fn srid<'a>(_ctx: &SharedContext) -> Parser<'a, u8, Directive> {
         .name("srid")
 }
 
-fn extent<'a>(_ctx: &SharedContext) -> Parser<'a, u8, Directive> {
-    let kw = seq(KEYWORD_EXTENT) - spacing();
-    let minx = number() - spacing();
-    let maxx = number() - spacing();
-    let miny = number() - spacing();
-    let maxy = number();
-    let extent = minx + maxx + miny + maxy;
+// fn extent<'a>(_ctx: &SharedContext) -> Parser<'a, u8, Directive> {
+//     let kw = seq(KEYWORD_EXTENT) - spacing();
+//     let minx = number() - spacing();
+//     let maxx = number() - spacing();
+//     let miny = number() - spacing();
+//     let maxy = number();
+//     let extent = minx + maxx + miny + maxy;
 
-    (kw * extent)
-        .map(|(((minx, maxx), miny), maxy)| {
-            Extent {
-                minx,
-                maxx,
-                miny,
-                maxy,
-            }
-            .into()
-        })
-        .name("extent")
-}
+//     (kw * extent)
+//         .map(|(((minx, maxx), miny), maxy)| {
+//             Extent {
+//                 minx,
+//                 maxx,
+//                 miny,
+//                 maxy,
+//             }
+//             .into()
+//         })
+//         .name("extent")
+// }
 
 fn map<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, MapBlock> {
     let map = seq(KEYWORD_MAP) - eol();
-    let body = srid(ctx) | extent(ctx) | data(ctx);
+    let body = srid(ctx) | data(ctx);
     let expressions = list(body, trailing_space());
-    (map * expressions)
-        .map(|directives| MapBlock { directives })
-        .name("map")
-    // with_init(
-    //     with_finalizer(
-    //         (map * expressions)
-    //             .map(|directives| MapBlock { directives })
-    //             .name("map"),
-    //         move || pop_scope(&ctx.clone()),
-    //     ),
-    //     move || push_scope(&ctx.clone()),
-    // )
+    (map * expressions).map(|directives| MapBlock { directives })
 }
 
 fn source<'a>(_ctx: &SharedContext) -> Parser<'a, u8, Directive> {
@@ -792,9 +789,9 @@ fn pattern<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, Command> {
     let kw = seq(COMMAND_PATTERN) - spacing();
     (kw * value(ctx)).map(|path| Command::Pattern(Pattern { path }))
 }
-fn label<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, Command> {
+fn text<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, Command> {
     let kw = seq(COMMAND_LABEL) - spacing();
-    (kw * value(ctx)).map(|content| Command::Label(Label { content }))
+    (kw * value(ctx)).map(|content| Command::Text(Text { content }))
 }
 
 fn command<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, Command> {
@@ -807,7 +804,7 @@ fn command<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, Command> {
             | fill(ctx)
             | stroke(ctx)
             | pattern(ctx)
-            | label(ctx),
+            | text(ctx),
     )
 }
 
@@ -830,8 +827,53 @@ fn symbology<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, Directive> {
     )
 }
 
+fn anchor<'a>(_ctx: &'a SharedContext) -> Parser<'a, u8, Intent> {
+    let kw = seq(INTENT_ANCHOR) - spacing();
+    let anchor = (seq(ANCHOR_POINT) | seq(ANCHOR_CENTROID)).convert(|k| match k {
+        ANCHOR_POINT => Ok(Anchor::Point),
+        ANCHOR_CENTROID => Ok(Anchor::Centroid),
+        _ => Err(ParseError::Mysterious),
+    });
+    (kw * anchor).map(|anchor| Intent::Anchor(anchor))
+}
+fn size<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, Intent> {
+    let kw = seq(INTENT_SIZE) - spacing();
+    (kw * value(ctx)).map(|size| Intent::Size(Size { size }))
+}
+
+fn text_intent<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, Intent> {
+    let kw = seq(INTENT_TEXT) - spacing();
+    (kw * value(ctx)).map(|content| Intent::Text(Text { content }))
+}
+
+fn intent<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, Intent> {
+    text_intent(ctx) | anchor(ctx) | size(ctx)
+}
+
+fn label<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, Directive> {
+    let kw = seq(KEYWORD_LABEL) - spacing();
+    let pred = predicate(ctx) - opt_spacing();
+    let sep = seq(KEYWORD_INTENT) - opt_spacing();
+    let intent = intent(ctx) - opt_spacing();
+    let intents = (sep * intent).repeat(1..);
+
+    trace(
+        "label",
+        (kw * (pred + intents)).map(|(predicate, consequent)| {
+            Label {
+                predicate,
+                consequent,
+            }
+            .into()
+        }),
+    )
+}
+
 fn directive<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, Directive> {
-    trace("directive", source(ctx) | data(ctx) | symbology(ctx))
+    trace(
+        "directive",
+        source(ctx) | data(ctx) | symbology(ctx) | label(ctx),
+    )
 }
 
 fn layer<'a>(ctx: &'a SharedContext) -> Parser<'a, u8, LayerBlock> {

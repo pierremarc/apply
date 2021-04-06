@@ -90,6 +90,7 @@ impl Solver {
     where
         P: Problem,
     {
+        // let mut debug_vec: Vec<(u64, f64, f64, f64)> = vec![];
         let mut rng = thread_rng();
         let range = Uniform::new(0.0, 1.0);
 
@@ -109,7 +110,8 @@ impl Solver {
                 attempted += 1;
 
                 let de = new_energy - energy;
-                println!("[{}] {}", i, temperature);
+                // debug_vec.push((i, temperature, energy, new_energy));
+                // println!("[{}] temp: {}; delta: {};", i, temperature, de);
 
                 // println!(
                 //     "[{}] temp: {}, energy: {}, new_energy: {}",
@@ -144,6 +146,8 @@ impl Solver {
             }
         }
 
+        // println!("{:?}", debug_vec);
+
         state
     }
 }
@@ -151,12 +155,18 @@ impl Solver {
 impl Default for Solver {
     fn default() -> Solver {
         Solver {
-            iterations: 10_000,
+            iterations: 1000000,
             initial_temperature: 100.0,
             temperature_reduction: 0.95,
-            max_attempts: 1000,
-            max_accepts: 100,
-            max_rejects: 100,
+            max_attempts: 50 * 2,
+            max_accepts: 10 * 2,
+            max_rejects: 4 * 2,
+            // iterations: 10_000,
+            // initial_temperature: 100.0,
+            // temperature_reduction: 0.95,
+            // max_attempts: 1000,
+            // max_accepts: 100,
+            // max_rejects: 100,
         }
     }
 }

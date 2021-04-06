@@ -253,6 +253,8 @@ impl LabelCollection {
     }
 }
 
+const MAX_SCORE: f64 = 1_000_000_000_000_000.0;
+
 struct LabelOptim {
     initial: LabelCollection,
 }
@@ -265,7 +267,7 @@ impl Problem for LabelOptim {
     }
 
     fn energy(&self, state: &Self::State) -> f64 {
-        state.make_ruler().score() / f64::MAX
+        min(state.make_ruler().score(), MAX_SCORE) / MAX_SCORE
     }
 
     fn new_state(&self, state: &Self::State) -> Self::State {
@@ -280,7 +282,7 @@ mod tests {
     use rand::{distributions::Uniform, prelude::Distribution};
     use std::fs::File;
     use std::io::prelude::*;
-
+    use std::time::{Duration, SystemTime};
     fn gen_rect<U>(mut sample: U) -> Rect<f64>
     where
         U: FnMut() -> f64,
@@ -290,17 +292,17 @@ mod tests {
         let maxx = min(minx + sample(), minx + 1000.0);
         let maxy = miny + ((maxx - minx) / 2.0);
 
-        dbg!(Rect::new(
+        Rect::new(
             Coordinate { x: minx, y: miny },
             Coordinate { x: maxx, y: maxy },
-        ))
+        )
     }
 
     fn gen_col() -> LabelCollection {
         let mut rng = rand::thread_rng();
-        let uni = Uniform::from(0.0..10_000.0);
+        let uni = Uniform::from(0.0..100_000.0);
         let uni2 = Uniform::from(0..6);
-        let size: usize = 60;
+        let size: usize = 500;
         let mut labels = Vec::with_capacity(size);
         for _ in 0..size {
             labels.push(LabelItem::new(
@@ -332,9 +334,12 @@ mod tests {
     fn it_optimizes() {
         let problem = LabelOptim { initial: gen_col() };
         let solver = Solver::new();
+        let now = SystemTime::now();
         let solution = solver.solve(&problem);
+        let elapsed = now.elapsed().unwrap();
         let initial_score = problem.initial.make_ruler().score();
         let final_score = solution.make_ruler().score();
+        println!("elapsed: {}", elapsed.as_millis());
         out(&problem.initial, "initial.svg");
         out(&solution, "final.svg");
 

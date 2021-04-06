@@ -42,6 +42,17 @@ pub enum Literal {
     Boolean(bool),
 }
 
+impl fmt::Display for Literal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Literal::Nil => write!(f, "nil"),
+            Literal::Number(n) => write!(f, "{}", n),
+            Literal::String(s) => write!(f, "{}", s),
+            Literal::Boolean(b) => write!(f, "{}", if *b { "true" } else { "false" }),
+        }
+    }
+}
+
 impl From<i64> for Literal {
     fn from(value: i64) -> Self {
         Literal::Number(Num::Integer(value))
@@ -233,7 +244,7 @@ pub struct Pattern {
 }
 
 #[derive(Debug, Clone)]
-pub struct Label {
+pub struct Text {
     pub content: Value,
 }
 #[derive(Debug, Clone)]
@@ -251,13 +262,37 @@ pub enum Command {
     Fill(Fill),
     Stroke(Stroke),
     Pattern(Pattern),
-    Label(Label),
+    Text(Text),
+}
+
+#[derive(Debug, Clone)]
+pub enum Anchor {
+    Point,
+    Centroid,
+}
+
+#[derive(Debug, Clone)]
+pub struct Size {
+    pub size: Value,
+}
+
+#[derive(Debug, Clone)]
+pub enum Intent {
+    Anchor(Anchor),
+    Text(Text),
+    Size(Size),
 }
 
 #[derive(Debug, Clone)]
 pub struct Sym {
     pub predicate: PredGroup,
     pub consequent: Vec<Command>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Label {
+    pub predicate: PredGroup,
+    pub consequent: Vec<Intent>,
 }
 
 #[derive(Debug, Clone)]
@@ -277,9 +312,10 @@ pub struct Source {
 #[derive(Debug, Clone)]
 pub enum Directive {
     Srid(Srid),
-    Extent(Extent),
+    // Extent(Extent),
     Data(Data),
     Sym(Sym),
+    Label(Label),
     Source(Source),
 }
 
@@ -289,11 +325,11 @@ impl From<Srid> for Directive {
     }
 }
 
-impl From<Extent> for Directive {
-    fn from(arg: Extent) -> Self {
-        Directive::Extent(arg)
-    }
-}
+// impl From<Extent> for Directive {
+//     fn from(arg: Extent) -> Self {
+//         Directive::Extent(arg)
+//     }
+// }
 
 impl From<Data> for Directive {
     fn from(arg: Data) -> Self {
@@ -304,6 +340,12 @@ impl From<Data> for Directive {
 impl From<Sym> for Directive {
     fn from(arg: Sym) -> Self {
         Directive::Sym(arg)
+    }
+}
+
+impl From<Label> for Directive {
+    fn from(arg: Label) -> Self {
+        Directive::Label(arg)
     }
 }
 
